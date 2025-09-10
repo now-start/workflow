@@ -5,32 +5,18 @@ on:
     inputs:
       service-name:
         description: 'Service name for Docker image tagging'
-        required: true
+        required: false
         type: string
+        default: '${{ github.event.repository.name }}'
       java-version:
         description: 'Java version to use'
         required: false
         type: string
         default: '17'
-      gradle-version:
-        description: 'Gradle version to use'
-        required: false
-        type: string
-        default: 'wrapper'
-      registry:
-        description: 'Container registry URL'
-        required: false
-        type: string
-        default: 'ghcr.io'
-      registry-username:
-        description: 'Registry username'
-        required: false
-        type: string
-        default: ${{ github.actor }}
     secrets:
       registry-password:
         description: 'Registry password/token'
-        required: false
+        required: true
 
 jobs:
   check:
@@ -54,11 +40,13 @@ jobs:
       - name: Extract version from build.gradle
         id: version
         run: |
-          # 더 안정적인 버전 추출 방식
           VERSION=$(./gradlew properties -q | grep "^version:" | awk '{print $2}')
           if [ -z "$VERSION" ]; then
-            # fallback: 기존 방식으로 시도 (단일/이중 따옴표 모두 지원)
             VERSION=$(grep "version\s*=" build.gradle | head -1 | sed -E "s/.*version\s*=\s*['\"]([^'\"]*)['\"].*/\1/")
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from build.gradle"
+            exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
@@ -85,7 +73,7 @@ jobs:
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
           gh release create "v${{ steps.version.outputs.version }}" \
-            --title "Release v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
             --generate-notes
 
   build:
@@ -102,53 +90,36 @@ jobs:
           java-version: ${{ inputs.java-version }}
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/gradle-build-action@v2
-        with:
-          gradle-version: ${{ inputs.gradle-version }}
-
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        run: |
-          set -e
-          ./gradlew clean build
-          if [ $? -ne 0 ]; then
-            echo "Build failed"
-            exit 1
-          fi
+        run: ./gradlew clean build
 
       - name: Build Docker image with bootBuildImage
         run: |
-          set -e
-          IMAGE_NAME="${{ inputs.registry }}/now-start/${{ inputs.service-name }}"
+          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
           ./gradlew bootBuildImage \
             --imageName="$IMAGE_NAME:${{ needs.check.outputs.version }}"
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ inputs.registry }}
-          username: ${{ inputs.registry-username }}
-          password: ${{ secrets.registry-password || secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.registry-password }}
 
       - name: Tag and push Docker images
         run: |
-          set -e
-          IMAGE_NAME="${{ inputs.registry }}/now-start/${{ inputs.service-name }}"
-          
-          # Tag as latest
+          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
           docker tag "$IMAGE_NAME:${{ needs.check.outputs.version }}" "$IMAGE_NAME:latest"
-          
-          # Push both tags
           docker push "$IMAGE_NAME:${{ needs.check.outputs.version }}"
           docker push "$IMAGE_NAME:latest"
 
       - name: Clean up Docker images
         if: always()
         run: |
-          IMAGE_NAME="${{ inputs.registry }}/now-start/${{ inputs.service-name }}"
+          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
           docker rmi "$IMAGE_NAME:${{ needs.check.outputs.version }}" || true
           docker rmi "$IMAGE_NAME:latest" || true
           docker system prune -f || true

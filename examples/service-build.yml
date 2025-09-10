@@ -9,26 +9,26 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build-and-deploy:
-    # main 브랜치에 푸시될 때만 배포 실행
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    uses: now-start/.github/.github/workflows/reusable-java-build.yml@main
-    with:
-      # 각 서비스별로 service-name을 변경하세요
-      # 예시:
-      # - admin-service
-      # - eureka-service  
-      # - gateway-service
-      # - lotto-service
-      # - nyang-nyang-bot
-      service-name: YOUR_SERVICE_NAME
-      java-version: '17'  # 필요시 변경
+    if: github.event_name == 'push'
+    uses: now-start/workflows/.github/workflows/reusable-java-build.yml@main
+    # with 섹션은 기본값으로 충분합니다
+    # service-name: 자동으로 레포 이름 사용
+    # java-version: 기본값 '17' 사용
+    # 필요시에만 아래 주석을 해제하여 사용:
+    # with:
+    #   service-name: custom-service-name
+    #   java-version: '21'
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
-  # PR에 대해서는 빌드만 수행 (배포하지 않음)
-  build-only:
+  # PR에서는 빌드/테스트만 수행
+  test-only:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -41,11 +41,8 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/gradle-build-action@v2
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
-      - name: Build with Gradle
+      - name: Build and test
         run: ./gradlew build
-
-      - name: Run tests
-        run: ./gradlew test
