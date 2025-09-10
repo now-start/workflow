@@ -1,4 +1,4 @@
-# now-start/.github
+# now-start/workflow
 
 now-start 조직의 공통 GitHub Actions 워크플로우 저장소입니다.
 
@@ -28,7 +28,7 @@ on:
 
 jobs:
   build-and-deploy:
-    uses: now-start/.github/.github/workflows/reusable-java-build.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-java-build.yml@main
     with:
       service-name: your-service-name  # 예: admin-service, lotto-service
     secrets:
