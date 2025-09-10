@@ -1,0 +1,119 @@
+name: Reusable Java Build and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name for Docker image tagging'
+        required: true
+        type: string
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      gradle-version:
+        description: 'Gradle version to use'
+        required: false
+        type: string
+        default: 'wrapper'
+      registry:
+        description: 'Container registry URL'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      registry-username:
+        description: 'Registry username'
+        required: false
+        type: string
+        default: ${{ github.actor }}
+    secrets:
+      registry-password:
+        description: 'Registry password/token'
+        required: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag-exists: ${{ steps.check-tag.outputs.exists }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version from build.gradle
+        id: version
+        run: |
+          VERSION=$(grep "version = " build.gradle | head -1 | awk -F'"' '{print $2}')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Check if tag exists
+        id: check-tag
+        run: |
+          git fetch --tags
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.version.outputs.version }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v${{ steps.version.outputs.version }} does not exist"
+          fi
+
+      - name: Create tag and release
+        if: steps.check-tag.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            --generate-notes
+
+  build:
+    runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.tag-exists == 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: ${{ inputs.gradle-version }}
+
+      - name: Build with Gradle
+        run: ./gradlew build
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:${{ needs.check.outputs.version }} .
+          docker tag ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:${{ needs.check.outputs.version }} ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:latest
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.registry-username }}
+          password: ${{ secrets.registry-password || secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker images
+        run: |
+          docker push ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:${{ needs.check.outputs.version }}
+          docker push ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:latest
+
+      - name: Clean up Docker images
+        run: |
+          docker rmi ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:${{ needs.check.outputs.version }} || true
+          docker rmi ${{ inputs.registry }}/now-start/${{ inputs.service-name }}:latest || true
