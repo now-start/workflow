@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: '${{ github.event.repository.name }}'
+      registry-org:
+        description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
+        required: false
+        type: string
+        default: 'ghcr.io/now-start'
       java-version:
         description: 'Java version to use'
         required: false
@@ -33,6 +38,7 @@ jobs:
         with:
           java-version: ${{ inputs.java-version }}
           distribution: 'temurin'
+          cache: gradle
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -49,7 +55,11 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
+
+          echo "## 📦 프로젝트 정보" >> $GITHUB_STEP_SUMMARY
+          echo "- **서비스명**: ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **버전**: v$VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java 버전**: ${{ inputs.java-version }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Check if tag exists
         id: check-tag
@@ -57,10 +67,14 @@ jobs:
           git fetch --tags
           if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag v${{ steps.version.outputs.version }} already exists"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ 빌드 건너뜀" >> $GITHUB_STEP_SUMMARY
+            echo "버전 \`v${{ steps.version.outputs.version }}\` 태그가 이미 존재하여 빌드를 건너뜁니다." >> $GITHUB_STEP_SUMMARY
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Tag v${{ steps.version.outputs.version }} does not exist"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 🏗️ 빌드 준비 완료" >> $GITHUB_STEP_SUMMARY
+            echo "새 버전 \`v${{ steps.version.outputs.version }}\` 빌드를 시작합니다." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Create tag and release
@@ -72,9 +86,25 @@ jobs:
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
+
+          # 브랜치에 따라 릴리즈 타입 결정
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            PRERELEASE_FLAG=""
+            RELEASE_TYPE="정식 릴리즈"
+          else
+            PRERELEASE_FLAG="--prerelease"
+            RELEASE_TYPE="프리릴리즈"
+          fi
+
           gh release create "v${{ steps.version.outputs.version }}" \
             --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes
+            --generate-notes $PRERELEASE_FLAG
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🏷️ 릴리즈" >> $GITHUB_STEP_SUMMARY
+          echo "- **태그**: \`v${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }})" >> $GITHUB_STEP_SUMMARY
+          echo "- **타입**: $RELEASE_TYPE" >> $GITHUB_STEP_SUMMARY
 
   build:
     runs-on: ubuntu-latest
@@ -89,18 +119,33 @@ jobs:
         with:
           java-version: ${{ inputs.java-version }}
           distribution: 'temurin'
+          cache: gradle
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        run: ./gradlew clean build
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔧 빌드 상태" >> $GITHUB_STEP_SUMMARY
+
+          GRADLE_CACHE_SIZE=$(du -sh ~/.gradle/caches 2>/dev/null | cut -f1 || echo "0")
+          echo "- **Gradle 캐시 크기**: $GRADLE_CACHE_SIZE" >> $GITHUB_STEP_SUMMARY
+
+          START_TIME=$(date +%s)
+          ./gradlew clean build --info
+          END_TIME=$(date +%s)
+
+          BUILD_TIME=$((END_TIME - START_TIME))
+          echo "- **빌드 소요 시간**: ${BUILD_TIME}초" >> $GITHUB_STEP_SUMMARY
+          echo "- **빌드 완료 시간**: $(date)" >> $GITHUB_STEP_SUMMARY
 
       - name: Build Docker image with bootBuildImage
         run: |
-          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
+          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           ./gradlew bootBuildImage \
-            --imageName="$IMAGE_NAME:${{ needs.check.outputs.version }}"
+            --imageName="$IMAGE_NAME:${{ needs.check.outputs.version }}" \
+            --build-cache
 
       - name: Log in to Container Registry
         uses: docker/login-action@v3
@@ -111,15 +156,30 @@ jobs:
 
       - name: Tag and push Docker images
         run: |
-          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
+          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           docker tag "$IMAGE_NAME:${{ needs.check.outputs.version }}" "$IMAGE_NAME:latest"
           docker push "$IMAGE_NAME:${{ needs.check.outputs.version }}"
           docker push "$IMAGE_NAME:latest"
 
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🐳 Docker 이미지" >> $GITHUB_STEP_SUMMARY
+          echo "| 태그 | 이미지 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`${{ needs.check.outputs.version }}\` | \`$IMAGE_NAME:${{ needs.check.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`latest\` | \`$IMAGE_NAME:latest\` |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Pull 방법" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull $IMAGE_NAME:${{ needs.check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "# 또는" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull $IMAGE_NAME:latest" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
       - name: Clean up Docker images
         if: always()
         run: |
-          IMAGE_NAME="ghcr.io/now-start/${{ inputs.service-name }}"
+          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           docker rmi "$IMAGE_NAME:${{ needs.check.outputs.version }}" || true
           docker rmi "$IMAGE_NAME:latest" || true
-          docker system prune -f || true
+          docker builder prune -af || true

@@ -16,7 +16,7 @@ permissions:
 jobs:
   build-and-deploy:
     if: github.event_name == 'push'
-    uses: now-start/workflows/.github/workflows/reusable-java-build.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-java-build.yml@main
     # with 섹션은 기본값으로 충분합니다
     # service-name: 자동으로 레포 이름 사용
     # java-version: 기본값 '17' 사용
