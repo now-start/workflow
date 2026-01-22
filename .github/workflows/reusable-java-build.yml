@@ -13,11 +13,6 @@ on:
         required: false
         type: string
         default: 'ghcr.io/now-start'
-      java-version:
-        description: 'Java version to use'
-        required: false
-        type: string
-        default: '17'
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -29,14 +24,26 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag-exists: ${{ steps.check-tag.outputs.exists }}
+      java-version: ${{ steps.java-info.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ inputs.java-version }}
+      - name: Detect Java version
+        id: java-info
+        run: |
+          DETECTED_VERSION=$(grep "languageVersion = JavaLanguageVersion.of" build.gradle | sed -E 's/.*of\(([0-9]+)\).*/\1/' | head -1)
+          if [ -z "$DETECTED_VERSION" ]; then
+            echo "Error: Could not extract Java version from build.gradle"
+            exit 1
+          fi
+          
+          echo "version=$DETECTED_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set up JDK ${{ steps.java-info.outputs.version }}
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ steps.java-info.outputs.version }}
           distribution: 'temurin'
           cache: gradle
 
@@ -59,7 +66,7 @@ jobs:
           echo "## 📦 프로젝트 정보" >> $GITHUB_STEP_SUMMARY
           echo "- **서비스명**: ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **버전**: v$VERSION" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java 버전**: ${{ inputs.java-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java 버전**: ${{ steps.java-info.outputs.version }} (추출용)" >> $GITHUB_STEP_SUMMARY
 
       - name: Check if tag exists
         id: check-tag
@@ -114,10 +121,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK ${{ inputs.java-version }}
+      - name: Set up JDK ${{ needs.check.outputs.java-version }}
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ needs.check.outputs.java-version }}
           distribution: 'temurin'
           cache: gradle
 
@@ -127,7 +134,7 @@ jobs:
       - name: Build with Gradle
         run: |
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🔧 빌드 상태" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔧 빌드 상태 (JDK ${{ needs.check.outputs.java-version }})" >> $GITHUB_STEP_SUMMARY
 
           GRADLE_CACHE_SIZE=$(du -sh ~/.gradle/caches 2>/dev/null | cut -f1 || echo "0")
           echo "- **Gradle 캐시 크기**: $GRADLE_CACHE_SIZE" >> $GITHUB_STEP_SUMMARY

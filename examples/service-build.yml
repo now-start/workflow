@@ -19,11 +19,9 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-build.yml@main
     # with 섹션은 기본값으로 충분합니다
     # service-name: 자동으로 레포 이름 사용
-    # java-version: 기본값 '17' 사용
     # 필요시에만 아래 주석을 해제하여 사용:
     # with:
     #   service-name: custom-service-name
-    #   java-version: '21'
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
