@@ -32,13 +32,8 @@ jobs:
       - name: Detect Java version
         id: java-info
         run: |
-          # build.gradle에서 Java 버전 추출 (더 다양한 패턴 대응)
-          DETECTED_VERSION=$(grep -E "languageVersion\s*=\s*JavaLanguageVersion.of" build.gradle | sed -E 's/.*of\(([0-9]+)\).*/\1/' | head -1)
-          
-          if [ -z "$DETECTED_VERSION" ]; then
-            # fallback: sourceCompatibility 또는 targetCompatibility 확인
-            DETECTED_VERSION=$(grep -E "(source|target)Compatibility\s*=\s*['\"]?([0-9]+)['\"]?" build.gradle | sed -E "s/.*['\"]?([0-9]+)['\"]?.*/\1/" | head -1)
-          fi
+          DETECTED_VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
+          DETECTED_VERSION=${DETECTED_VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
 
           if [ -z "$DETECTED_VERSION" ]; then
             echo "Error: Could not extract Java version from build.gradle"
