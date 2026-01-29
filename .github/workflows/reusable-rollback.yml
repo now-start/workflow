@@ -1,0 +1,66 @@
+name: Reusable Rollback
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name for Docker image tagging'
+        required: false
+        type: string
+        default: '${{ github.event.repository.name }}'
+      registry-org:
+        description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
+        required: false
+        type: string
+        default: 'ghcr.io/now-start'
+    secrets:
+      registry-password:
+        description: 'Registry password/token'
+        required: true
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for gh cli context)
+        uses: actions/checkout@v4
+
+      - name: Get last stable release
+        id: last_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LAST_RELEASE=$(gh release list --limit 1 --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease == false)][0].tagName')
+
+          if [ -z "$LAST_RELEASE" ]; then
+            echo "❌ No stable release found"
+            exit 1
+          fi
+
+          echo "last=$LAST_RELEASE" >> $GITHUB_OUTPUT
+          echo "✅ Last stable release: $LAST_RELEASE"
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Retag last stable image as latest
+        run: |
+          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
+          VERSION="${{ steps.last_release.outputs.last }}"
+          # v로 시작하면 제거 (예: v1.2.3 -> 1.2.3)
+          VERSION_CLEAN="${VERSION#v}"
+
+          echo "🔄 Rolling back $IMAGE_NAME:$VERSION_CLEAN → $IMAGE_NAME:latest"
+
+          docker pull "$IMAGE_NAME:$VERSION_CLEAN"
+          docker tag "$IMAGE_NAME:$VERSION_CLEAN" "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:latest"
+
+      - name: Summary
+        run: |
+          echo "### 🔁 Rollback Successful" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Restored**: \`${{ steps.last_release.outputs.last }}\` → \`latest\`" >> $GITHUB_STEP_SUMMARY

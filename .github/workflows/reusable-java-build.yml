@@ -32,42 +32,40 @@ jobs:
       - name: Detect Java version
         id: java-info
         run: |
-          DETECTED_VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
-          DETECTED_VERSION=${DETECTED_VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
+          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
+          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
 
-          if [ -z "$DETECTED_VERSION" ]; then
-            echo "Error: Could not extract Java version from build.gradle"
+          if [ -z "$VERSION" ]; then
+            echo "❌ Error: Could not extract Java version from build.gradle"
             exit 1
           fi
           
-          echo "version=$DETECTED_VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Detected Java version: $VERSION"
 
       - name: Set up JDK ${{ steps.java-info.outputs.version }}
         uses: actions/setup-java@v4
         with:
           java-version: ${{ steps.java-info.outputs.version }}
           distribution: 'temurin'
-          cache: gradle
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+          cache: 'gradle'
 
       - name: Extract version from build.gradle
         id: version
         run: |
-          VERSION=$(./gradlew properties -q | grep "^version:" | awk '{print $2}')
-          if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
-            VERSION=$(grep "version\s*=" build.gradle | head -1 | sed -E "s/.*version\s*=\s*['\"]([^'\"]*)['\"].*/\1/")
-          fi
+          VERSION=$(./gradlew properties -q --no-daemon | grep "^version:" | awk '{print $2}')
           
-          if [ -z "$VERSION" ]; then
-            echo "Error: Could not extract version from build.gradle"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
+            echo "❌ Error: Could not extract version from Gradle properties"
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Detected project version: $VERSION"
 
       - name: Check if build should be skipped
         id: check-skip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           SKIP="false"
@@ -75,31 +73,30 @@ jobs:
 
           if [ "$VERSION" = "0.0.0" ]; then
             SKIP="true"
-            REASON="초기 버전(0.0.0)이므로 빌드를 건너뜁니다."
+            REASON="Initial version (0.0.0)"
           else
-            git fetch --tags
-            if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            # Check tag existence via GitHub API
+            HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/v$VERSION")
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
               SKIP="true"
-              REASON="버전 \`v$VERSION\` 태그가 이미 존재하여 빌드를 건너뜁니다."
+              REASON="Tag v$VERSION already exists"
             fi
           fi
 
           echo "skip=$SKIP" >> $GITHUB_OUTPUT
           echo "reason=$REASON" >> $GITHUB_OUTPUT
 
-          echo "## 📊 빌드 요약" >> $GITHUB_STEP_SUMMARY
-          echo "- **서비스명**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **프로젝트 버전**: \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java 버전**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           
           if [ "$SKIP" = "true" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### ⚠️ 빌드 건너뜀" >> $GITHUB_STEP_SUMMARY
-            echo "$REASON" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🏗️ 빌드 준비 완료" >> $GITHUB_STEP_SUMMARY
-            echo "새 버전 \`v$VERSION\` 빌드를 시작합니다." >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Create tag and release
@@ -115,21 +112,17 @@ jobs:
           # 브랜치에 따라 릴리즈 타입 결정
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             PRERELEASE_FLAG=""
-            RELEASE_TYPE="정식 릴리즈"
+            RELEASE_TYPE="Release"
           else
             PRERELEASE_FLAG="--prerelease"
-            RELEASE_TYPE="프리릴리즈"
+            RELEASE_TYPE="Prerelease"
           fi
 
           gh release create "v${{ steps.version.outputs.version }}" \
             --title "v${{ steps.version.outputs.version }}" \
             --generate-notes $PRERELEASE_FLAG
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🏷️ 릴리즈" >> $GITHUB_STEP_SUMMARY
-          echo "- **태그**: \`v${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: [GitHub Release](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **타입**: $RELEASE_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release**: [v${{ steps.version.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}) ($RELEASE_TYPE)" >> $GITHUB_STEP_SUMMARY
 
   build:
     runs-on: ubuntu-latest
@@ -144,64 +137,46 @@ jobs:
         with:
           java-version: ${{ needs.check.outputs.java-version }}
           distribution: 'temurin'
-          cache: gradle
+          cache: 'gradle'
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Build with Gradle
         run: |
-          START_TIME=$(date +%s)
-          ./gradlew clean build --info
-          END_TIME=$(date +%s)
+          ./gradlew build --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
 
-          BUILD_TIME=$((END_TIME - START_TIME))
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔧 빌드 상태 (JDK ${{ needs.check.outputs.java-version }})" >> $GITHUB_STEP_SUMMARY
-          
-          GRADLE_CACHE_SIZE=$(du -sh ~/.gradle/caches 2>/dev/null | cut -f1 || echo "0")
-          echo "- **Gradle 캐시 크기**: $GRADLE_CACHE_SIZE" >> $GITHUB_STEP_SUMMARY
-          echo "- **빌드 소요 시간**: ${BUILD_TIME}초" >> $GITHUB_STEP_SUMMARY
-          echo "- **빌드 완료 시간**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Build Successful" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: `${{ inputs.service-name }}`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: `v${{ needs.check.outputs.version }}`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: `${{ needs.check.outputs.java-version }}`" >> $GITHUB_STEP_SUMMARY
 
-      - name: Build Docker image with bootBuildImage
+      - name: Build and Push
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
+          VERSION="${{ needs.check.outputs.version }}"
+          
+          echo "🏗️ Building Docker image: $IMAGE_NAME:$VERSION"
           ./gradlew bootBuildImage \
-            --imageName="$IMAGE_NAME:${{ needs.check.outputs.version }}" \
-            --build-cache
+            --imageName="$IMAGE_NAME:$VERSION" \
+            --build-cache \
+            -Dorg.gradle.jvmargs="-Xmx2g" \
+            -PBP_OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
+            -PBP_OCI_REVISION="${{ github.sha }}"
 
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.registry-password }}
+          echo "🔐 Logging in to GHCR"
+          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      - name: Tag and push Docker images
-        run: |
-          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          docker tag "$IMAGE_NAME:${{ needs.check.outputs.version }}" "$IMAGE_NAME:latest"
-          docker push "$IMAGE_NAME:${{ needs.check.outputs.version }}"
+          echo "🚀 Pushing images"
+          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:$VERSION"
           docker push "$IMAGE_NAME:latest"
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🐳 Docker 이미지" >> $GITHUB_STEP_SUMMARY
-          echo "| 태그 | 이미지 |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`${{ needs.check.outputs.version }}\` | \`$IMAGE_NAME:${{ needs.check.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`latest\` | \`$IMAGE_NAME:latest\` |" >> $GITHUB_STEP_SUMMARY
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### 📋 Pull 방법" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $IMAGE_NAME:${{ needs.check.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "# 또는" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $IMAGE_NAME:latest" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "- \`$IMAGE_NAME:$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`$IMAGE_NAME:latest\`" >> $GITHUB_STEP_SUMMARY
 
-      - name: Clean up Docker images
+      - name: Clean up
         if: always()
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"

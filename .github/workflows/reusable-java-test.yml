@@ -1,0 +1,60 @@
+name: Reusable Java Test
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version (if not specified, it will be detected from build.gradle)'
+        required: false
+        type: string
+      distribution:
+        description: 'JDK distribution'
+        required: false
+        type: string
+        default: 'temurin'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect Java version
+        id: java-info
+        run: |
+          if [ -n "${{ inputs.java-version }}" ]; then
+            VERSION="${{ inputs.java-version }}"
+          else
+            VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
+            VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
+            
+            if [ -z "$VERSION" ]; then
+              echo "❌ Error: Could not extract Java version from build.gradle"
+              exit 1
+            fi
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Detected Java version: $VERSION"
+
+      - name: Set up JDK ${{ steps.java-info.outputs.version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ steps.java-info.outputs.version }}
+          distribution: ${{ inputs.distribution }}
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build and test
+        run: |
+          ./gradlew build --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
+          
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🧪 Test Result" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
