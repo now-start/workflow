@@ -28,7 +28,7 @@ on:
 
 jobs:
   build-and-deploy:
-    uses: now-start/workflow/.github/workflows/reusable-java-build.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-java-build.yaml@main
     with:
       service-name: your-service-name  # 예: admin-service, lotto-service
     secrets:

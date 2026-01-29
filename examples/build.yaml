@@ -18,7 +18,7 @@ permissions:
 jobs:
   build-and-deploy:
     if: github.event_name == 'push'
-    uses: now-start/workflow/.github/workflows/reusable-java-build.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-java-build.yaml@main
     # with 섹션은 기본값으로 충분합니다
     # service-name: 자동으로 레포 이름 사용
     # 필요시에만 아래 주석을 해제하여 사용:
@@ -30,10 +30,10 @@ jobs:
   # PR에서는 빌드/테스트만 수행
   test-only:
     if: github.event_name == 'pull_request'
-    uses: now-start/workflow/.github/workflows/reusable-java-test.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
 
   rollback:
     if: github.event.action == 'prereleased'
-    uses: now-start/workflow/.github/workflows/reusable-rollback.yml@main
+    uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
