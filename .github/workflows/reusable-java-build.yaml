@@ -53,6 +53,7 @@ jobs:
       - name: Extract version from build.gradle
         id: version
         run: |
+          chmod +x gradlew
           VERSION=$(./gradlew properties -q --no-daemon | grep "^version:" | awk '{print $2}')
           
           if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
