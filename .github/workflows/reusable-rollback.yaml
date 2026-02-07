@@ -31,8 +31,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 1 --json tagName \
-            --jq '.[0].tagName')
+          LATEST_INFO=$(gh release list --limit 1 --json tagName,isPrerelease \
+            --jq '.[0] | "\(.tagName)|\(.isPrerelease)"')
+          IFS='|' read -r LATEST_TAG LATEST_IS_PRERELEASE <<< "$LATEST_INFO"
+
+          if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
+            LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 1 --json tagName \
+              --jq '.[0].tagName')
+          else
+            LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 2 --json tagName \
+              --jq '.[1].tagName')
+          fi
 
           if [ -z "$LAST_RELEASE" ]; then
             echo "❌ No stable release found"
