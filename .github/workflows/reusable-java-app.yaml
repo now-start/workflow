@@ -29,7 +29,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
 
-  # main push → 준비 단계 (버전/Java 버전 추출, Pre-release 생성, skip 여부 계산)
+  # main push + DEV 모드 → 준비 단계 (버전/Java 버전 추출, Pre-release 생성, skip 여부 계산)
   prepare-dev:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev }}
     uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
@@ -57,6 +57,45 @@ jobs:
       java-version: ${{ needs.prepare-dev.outputs.java-version }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
+
+  # main push + PRD-only 모드 → 준비 단계 (버전/Java 버전 추출, skip 여부 계산)
+  prepare-prd:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev }}
+    uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
+    with:
+      environment: prd
+
+  # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행 (PRD-only)
+  build-prd:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
+    needs: prepare-prd
+    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
+    with:
+      java-version: ${{ needs.prepare-prd.outputs.java-version }}
+
+  # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시 (PRD-only)
+  docker-prd:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
+    needs: [prepare-prd, build-prd]
+    uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      registry-org: ${{ inputs.registry-org }}
+      environment: prd
+      version: ${{ needs.prepare-prd.outputs.version }}
+      java-version: ${{ needs.prepare-prd.outputs.java-version }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+
+  # PRD-only 모드: main push 에서 새 버전이면 stable Release 생성
+  release-prd:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
+    needs: docker-prd
+    uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
+    with:
+      tag-name: v${{ needs.prepare-prd.outputs.version }}
+    secrets:
+      github-token: ${{ secrets.registry-password }}
 
   # Pre-release → Release 승격 시: 해당 버전 이미지 latest 프로모트 (PRD 배포)
   promote-to-prod:
