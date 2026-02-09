@@ -1,0 +1,43 @@
+name: Reusable Java Release
+
+on:
+  workflow_call:
+    inputs:
+      tag-name:
+        description: 'Git tag name for the release (e.g., v1.2.3)'
+        required: true
+        type: string
+    secrets:
+      github-token:
+        description: 'GitHub token for creating/viewing releases'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for git/gh context)
+        uses: actions/checkout@v4
+
+      - name: Ensure tag and stable release
+        env:
+          GITHUB_TOKEN: ${{ secrets.github-token }}
+        run: |
+          TAG="${{ inputs.tag-name }}"
+
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git tag "$TAG" 2>/dev/null || echo "Tag $TAG already exists"
+          git push origin "$TAG" 2>/dev/null || echo "Tag $TAG already pushed or cannot be pushed"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes
+          fi
+
+          echo "### 📦 Release" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
