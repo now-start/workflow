@@ -28,7 +28,7 @@ on:
   pull_request:
     branches: [main]
   release:
-    types: [released, edited]
+    types: [released, prereleased]
 
 jobs:
   app:

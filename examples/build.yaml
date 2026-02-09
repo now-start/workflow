@@ -12,8 +12,8 @@ on:
       - main
   release:
     types:
-      - released   # Pre-release → Release (PRD 배포)
-      - edited     # Release → Pre-release (롤백)
+      - released     # Pre-release → Release (PRD deploy)
+      - prereleased  # Release → Pre-release (rollback)
 
 permissions:
   contents: write

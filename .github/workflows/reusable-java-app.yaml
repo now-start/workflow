@@ -122,7 +122,7 @@ jobs:
 
   # Release → Pre-release 다운그레이드 시: 직전 stable release 기준 latest 롤백
   rollback-on-demote:
-    if: ${{ github.event_name == 'release' && github.event.action == 'edited' && github.event.release.prerelease == true && github.event.release.draft == false }}
+    if: ${{ github.event_name == 'release' && github.event.action == 'prereleased' && github.event.release.prerelease == true && github.event.release.draft == false }}
     uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
     with:
       service-name: ${{ inputs.service-name }}
