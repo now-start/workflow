@@ -59,13 +59,11 @@ jobs:
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           VERSION="${{ steps.last_release.outputs.last }}"
-          # v로 시작하면 제거 (예: v1.2.3 -> 1.2.3)
-          VERSION_CLEAN="${VERSION#v}"
 
-          echo "🔄 Rolling back $IMAGE_NAME:$VERSION_CLEAN → $IMAGE_NAME:latest"
+          echo "🔄 Rolling back $IMAGE_NAME:$VERSION → $IMAGE_NAME:latest"
 
-          docker pull "$IMAGE_NAME:$VERSION_CLEAN"
-          docker tag "$IMAGE_NAME:$VERSION_CLEAN" "$IMAGE_NAME:latest"
+          docker pull "$IMAGE_NAME:$VERSION"
+          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
           docker push "$IMAGE_NAME:latest"
 
       - name: Summary

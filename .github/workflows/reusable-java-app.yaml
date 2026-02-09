@@ -58,6 +58,17 @@ jobs:
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
+  # DEV 모드: main push 에서 새 버전이면 dev 프리릴리즈 생성
+  release-dev:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
+    needs: [prepare-dev, docker-dev]
+    uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
+    with:
+      tag-name: ${{ needs.prepare-dev.outputs.version }}
+      prerelease: true
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+
   # main push + PRD-only 모드 → 준비 단계 (버전/Java 버전 추출, skip 여부 계산)
   prepare-prd:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev }}
@@ -90,16 +101,17 @@ jobs:
   # PRD-only 모드: main push 에서 새 버전이면 stable Release 생성
   release-prd:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
-    needs: docker-prd
+    needs: [prepare-prd, docker-prd]
     uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
     with:
-      tag-name: v${{ needs.prepare-prd.outputs.version }}
+      tag-name: ${{ needs.prepare-prd.outputs.version }}
+      prerelease: false
     secrets:
-      github-token: ${{ secrets.registry-password }}
+      github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # Pre-release → Release 승격 시: 해당 버전 이미지 latest 프로모트 (PRD 배포)
   promote-to-prod:
-    if: ${{ github.event_name == 'release' && github.event.action == 'released' }}
+    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
     uses: now-start/workflow/.github/workflows/reusable-promote-to-prod.yaml@main
     with:
       service-name: ${{ inputs.service-name }}

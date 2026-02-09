@@ -64,28 +64,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "✅ Detected project version: $VERSION"
 
-      - name: Ensure pre-release for dev
-        if: ${{ inputs.environment == 'dev' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="v${{ steps.version.outputs.version }}"
-
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-
-          git tag "$TAG" 2>/dev/null || echo "Tag $TAG already exists"
-          git push origin "$TAG" 2>/dev/null || echo "Tag $TAG already pushed or cannot be pushed"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists"
-          else
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --generate-notes \
-              --prerelease
-          fi
-
       - name: Check if build should be skipped
         id: check-skip
         env:
@@ -95,21 +73,18 @@ jobs:
           SKIP="false"
           REASON=""
 
-          if [ "${{ inputs.environment }}" = "dev" ]; then
-            SKIP="false"
-            REASON=""
-          elif [ "$VERSION" = "0.0.0" ]; then
+          if [ "$VERSION" = "0.0.0" ]; then
             SKIP="true"
             REASON="Initial version (0.0.0)"
           else
             HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/v$VERSION")
+              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/$VERSION")
             
             if [ "$HTTP_STATUS" = "200" ]; then
               SKIP="true"
-              REASON="Tag v$VERSION already exists"
+              REASON="Tag $VERSION already exists"
             fi
           fi
 
@@ -117,11 +92,10 @@ jobs:
           echo "reason=$REASON" >> $GITHUB_OUTPUT
 
           echo "### 📊 Prepare Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
           
           if [ "$SKIP" = "true" ]; then
             echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
           fi
-

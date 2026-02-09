@@ -68,12 +68,56 @@ jobs:
 
 1. **버전 체크**: `build.gradle`에서 버전 추출
 2. **태그 확인**: 해당 버전의 태그가 이미 존재하는지 확인
-3. **Pre-release 생성(dev)**: dev 빌드 시, 해당 버전에 대한 Git 태그 및 Pre-release를 자동 생성(최초 1회)
+3. **Pre-release/Release 생성**:
+   - DEV+PRD 모드(dev): dev 빌드 성공 시 해당 버전에 대한 Git 태그 및 Pre-release를 자동 생성(최초 1회)
+   - PRD-only 모드(prd): main push 시 stable release 생성
 4. **빌드**: Gradle로 애플리케이션 빌드
 5. **Docker**: Docker 이미지 빌드 및 버전 태그(push)
 6. **배포 태그 갱신**:
    - dev 환경: `:dev` 태그를 최신 이미지로 갱신 (watchtower가 dev 환경 자동 업데이트)
    - prd 환경: Release 승격 시 별도 워크플로에서 `:latest` 태그를 해당 버전으로 프로모트 (watchtower가 PRD 환경 자동 업데이트)
+
+## 워크플로우 플로우 (ASCII 다이어그램)
+
+```text
+PR (pull_request)
+  └─ test-only
+       └─ reusable-java-test.yaml
+
+main push (enable-dev = true, DEV+PRD 모드)
+  └─ prepare-dev (reusable-java-prepare.yaml)
+       ├─ Gradle에서 version / Java version 추출
+       ├─ 동일 version 태그/릴리즈 존재 여부 확인
+       └─ skip == false 인 경우에만:
+            ├─ build-dev (reusable-java-test.yaml)
+            │    └─ Gradle build & test
+            ├─ docker-dev (reusable-java-docker.yaml)
+            │    └─ 이미지 푸시: :<version>, :dev
+            └─ dev 프리릴리즈 생성
+                 └─ tag: <version>, prerelease = true
+
+main push (enable-dev = false, PRD-only 모드)
+  └─ prepare-prd (reusable-java-prepare.yaml)
+       ├─ Gradle에서 version / Java version 추출
+       ├─ 동일 version 태그/릴리즈 존재 여부 확인
+       └─ skip == false 인 경우에만:
+            ├─ build-prd (reusable-java-test.yaml)
+            │    └─ Gradle build & test
+            ├─ docker-prd (reusable-java-docker.yaml)
+            │    └─ 이미지 푸시: :<version>, :latest
+            └─ stable 릴리즈 생성
+                 └─ tag: <version>, prerelease = false
+
+release 이벤트 (프리릴리즈 → 릴리즈 승격)
+  └─ promote-to-prod (reusable-promote-to-prod.yaml)
+       └─ 이미지 <version> → :latest 태깅/푸시
+
+release 이벤트 (릴리즈 → 프리릴리즈 demote, 롤백)
+  └─ reusable-rollback.yaml
+       ├─ stable 릴리즈 목록 조회
+       ├─ 직전 stable 릴리즈 선택
+       └─ 해당 버전 이미지를 :latest 로 재태깅/푸시
+```
 
 ## 장점
 

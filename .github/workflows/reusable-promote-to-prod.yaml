@@ -14,7 +14,7 @@ on:
         type: string
         default: 'ghcr.io/now-start'
       tag-name:
-        description: 'Git tag name for the release (e.g., v1.2.3)'
+        description: 'Git tag name for the release (e.g., 1.2.3)'
         required: true
         type: string
     secrets:
@@ -37,13 +37,11 @@ jobs:
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           VERSION="${{ inputs.tag-name }}"
-          # v로 시작하면 제거 (예: v1.2.3 -> 1.2.3)
-          VERSION_CLEAN="${VERSION#v}"
 
-          echo "🚀 Promoting $IMAGE_NAME:$VERSION_CLEAN → $IMAGE_NAME:latest"
+          echo "🚀 Promoting $IMAGE_NAME:$VERSION → $IMAGE_NAME:latest"
 
-          docker pull "$IMAGE_NAME:$VERSION_CLEAN"
-          docker tag "$IMAGE_NAME:$VERSION_CLEAN" "$IMAGE_NAME:latest"
+          docker pull "$IMAGE_NAME:$VERSION"
+          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
           docker push "$IMAGE_NAME:latest"
 
           echo "### 🚀 Promote to Latest (Prod)" >> $GITHUB_STEP_SUMMARY
