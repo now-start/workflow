@@ -1,0 +1,127 @@
+name: Reusable Java Prepare
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Deployment environment (e.g., prd, dev)'
+        required: false
+        type: string
+        default: 'prd'
+    outputs:
+      version:
+        description: 'Project version extracted from Gradle'
+        value: ${{ jobs.prepare.outputs.version }}
+      java-version:
+        description: 'Detected Java version'
+        value: ${{ jobs.prepare.outputs.java-version }}
+      should-skip:
+        description: 'Whether subsequent build/image steps should be skipped'
+        value: ${{ jobs.prepare.outputs.should-skip }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      java-version: ${{ steps.java-info.outputs.version }}
+      should-skip: ${{ steps.check-skip.outputs.skip }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect Java version
+        id: java-info
+        run: |
+          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
+          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ Error: Could not extract Java version from build.gradle"
+            exit 1
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Detected Java version: $VERSION"
+
+      - name: Set up JDK ${{ steps.java-info.outputs.version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ steps.java-info.outputs.version }}
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Extract version from build.gradle
+        id: version
+        run: |
+          chmod +x gradlew
+          VERSION=$(./gradlew properties -q --no-daemon | grep "^version:" | awk '{print $2}')
+          
+          if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
+            echo "❌ Error: Could not extract version from Gradle properties"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Detected project version: $VERSION"
+
+      - name: Ensure pre-release for dev
+        if: ${{ inputs.environment == 'dev' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+          git tag "$TAG" 2>/dev/null || echo "Tag $TAG already exists"
+          git push origin "$TAG" 2>/dev/null || echo "Tag $TAG already pushed or cannot be pushed"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              --prerelease
+          fi
+
+      - name: Check if build should be skipped
+        id: check-skip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SKIP="false"
+          REASON=""
+
+          if [ "${{ inputs.environment }}" = "dev" ]; then
+            SKIP="false"
+            REASON=""
+          elif [ "$VERSION" = "0.0.0" ]; then
+            SKIP="true"
+            REASON="Initial version (0.0.0)"
+          else
+            HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/v$VERSION")
+            
+            if [ "$HTTP_STATUS" = "200" ]; then
+              SKIP="true"
+              REASON="Tag v$VERSION already exists"
+            fi
+          fi
+
+          echo "skip=$SKIP" >> $GITHUB_OUTPUT
+          echo "reason=$REASON" >> $GITHUB_OUTPUT
+
+          echo "### 📊 Prepare Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$SKIP" = "true" ]; then
+            echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
+          fi
+

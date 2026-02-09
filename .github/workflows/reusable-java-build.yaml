@@ -1,4 +1,4 @@
-name: Reusable Java Build and Deploy
+name: Reusable Java Build and Deploy (Legacy Wrapper)
 
 on:
   workflow_call:
@@ -13,174 +13,38 @@ on:
         required: false
         type: string
         default: 'ghcr.io/now-start'
+      environment:
+        description: 'Deployment environment (e.g., prd, dev)'
+        required: false
+        type: string
+        default: 'prd'
     secrets:
       registry-password:
         description: 'Registry password/token'
         required: true
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      should-skip: ${{ steps.check-skip.outputs.skip }}
-      java-version: ${{ steps.java-info.outputs.version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Detect Java version
-        id: java-info
-        run: |
-          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
-          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
-
-          if [ -z "$VERSION" ]; then
-            echo "❌ Error: Could not extract Java version from build.gradle"
-            exit 1
-          fi
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "✅ Detected Java version: $VERSION"
-
-      - name: Set up JDK ${{ steps.java-info.outputs.version }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ steps.java-info.outputs.version }}
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      - name: Extract version from build.gradle
-        id: version
-        run: |
-          chmod +x gradlew
-          VERSION=$(./gradlew properties -q --no-daemon | grep "^version:" | awk '{print $2}')
-          
-          if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
-            echo "❌ Error: Could not extract version from Gradle properties"
-            exit 1
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "✅ Detected project version: $VERSION"
-
-      - name: Check if build should be skipped
-        id: check-skip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SKIP="false"
-          REASON=""
-
-          if [ "$VERSION" = "0.0.0" ]; then
-            SKIP="true"
-            REASON="Initial version (0.0.0)"
-          else
-            # Check tag existence via GitHub API
-            HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/v$VERSION")
-            
-            if [ "$HTTP_STATUS" = "200" ]; then
-              SKIP="true"
-              REASON="Tag v$VERSION already exists"
-            fi
-          fi
-
-          echo "skip=$SKIP" >> $GITHUB_OUTPUT
-          echo "reason=$REASON" >> $GITHUB_OUTPUT
-
-          echo "### 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$SKIP" = "true" ]; then
-            echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Create tag and release
-        if: steps.check-skip.outputs.skip == 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
-
-          # 브랜치에 따라 릴리즈 타입 결정
-          if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            PRERELEASE_FLAG=""
-            RELEASE_TYPE="Release"
-          else
-            PRERELEASE_FLAG="--prerelease"
-            RELEASE_TYPE="Prerelease"
-          fi
-
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes $PRERELEASE_FLAG
-
-          echo "- **Release**: [v${{ steps.version.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.version }}) ($RELEASE_TYPE)" >> $GITHUB_STEP_SUMMARY
+  prepare:
+    uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
+    with:
+      environment: ${{ inputs.environment }}
 
   build:
-    runs-on: ubuntu-latest
-    needs: check
-    if: needs.check.outputs.should-skip == 'false'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    needs: prepare
+    if: ${{ needs.prepare.outputs.should-skip == 'false' }}
+    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
+    with:
+      java-version: ${{ needs.prepare.outputs.java-version }}
 
-      - name: Set up JDK ${{ needs.check.outputs.java-version }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ needs.check.outputs.java-version }}
-          distribution: 'temurin'
-          cache: 'gradle'
-
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
-      - name: Build with Gradle
-        run: |
-          ./gradlew build --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
-
-          echo "### ✅ Build Successful" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: `${{ inputs.service-name }}`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: `v${{ needs.check.outputs.version }}`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java**: `${{ needs.check.outputs.java-version }}`" >> $GITHUB_STEP_SUMMARY
-
-      - name: Build and Push
-        run: |
-          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          VERSION="${{ needs.check.outputs.version }}"
-          
-          echo "🏗️ Building Docker image: $IMAGE_NAME:$VERSION"
-          ./gradlew bootBuildImage \
-            --imageName="$IMAGE_NAME:$VERSION" \
-            --build-cache \
-            -Dorg.gradle.jvmargs="-Xmx2g" \
-            -PBP_OCI_SOURCE="${{ github.server_url }}/${{ github.repository }}" \
-            -PBP_OCI_REVISION="${{ github.sha }}"
-
-          echo "🔐 Logging in to GHCR"
-          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-          echo "🚀 Pushing images"
-          docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
-          docker push "$IMAGE_NAME:$VERSION"
-          docker push "$IMAGE_NAME:latest"
-
-          echo "### 🐳 Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "- \`$IMAGE_NAME:$VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`$IMAGE_NAME:latest\`" >> $GITHUB_STEP_SUMMARY
-
-      - name: Clean up
-        if: always()
-        run: |
-          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          docker rmi "$IMAGE_NAME:${{ needs.check.outputs.version }}" || true
-          docker rmi "$IMAGE_NAME:latest" || true
-          docker builder prune -af || true
+  docker:
+    needs: [prepare, build]
+    if: ${{ needs.prepare.outputs.should-skip == 'false' }}
+    uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      registry-org: ${{ inputs.registry-org }}
+      environment: ${{ inputs.environment }}
+      version: ${{ needs.prepare.outputs.version }}
+      java-version: ${{ needs.prepare.outputs.java-version }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}

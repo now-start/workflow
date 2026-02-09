@@ -1,0 +1,51 @@
+name: Reusable Promote Image to Prod
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name for Docker image tagging'
+        required: false
+        type: string
+        default: '${{ github.event.repository.name }}'
+      registry-org:
+        description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
+        required: false
+        type: string
+        default: 'ghcr.io/now-start'
+      tag-name:
+        description: 'Git tag name for the release (e.g., v1.2.3)'
+        required: true
+        type: string
+    secrets:
+      registry-password:
+        description: 'Registry password/token'
+        required: true
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for gh and git context)
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: |
+          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Promote image to latest
+        run: |
+          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
+          VERSION="${{ inputs.tag-name }}"
+          # v로 시작하면 제거 (예: v1.2.3 -> 1.2.3)
+          VERSION_CLEAN="${VERSION#v}"
+
+          echo "🚀 Promoting $IMAGE_NAME:$VERSION_CLEAN → $IMAGE_NAME:latest"
+
+          docker pull "$IMAGE_NAME:$VERSION_CLEAN"
+          docker tag "$IMAGE_NAME:$VERSION_CLEAN" "$IMAGE_NAME:latest"
+          docker push "$IMAGE_NAME:latest"
+
+          echo "### 🚀 Promote to Latest (Prod)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Promoted**: \`${VERSION}\` → \`latest\`" >> $GITHUB_STEP_SUMMARY

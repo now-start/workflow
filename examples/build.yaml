@@ -1,39 +1,30 @@
 # 각 서비스에서 사용할 워크플로우 예제
-# .github/workflows/build.yml 파일로 저장하여 사용
+# 서비스 레포의 .github/workflows/build.yml 파일로 저장하여 사용
 
-name: Build and Deploy
+name: App CI/CD
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   release:
-    types: [prereleased]
+    types:
+      - released   # Pre-release → Release (PRD 배포)
+      - edited     # Release → Pre-release (롤백)
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  build-and-deploy:
-    if: github.event_name == 'push'
-    uses: now-start/workflow/.github/workflows/reusable-java-build.yaml@main
-    # with 섹션은 기본값으로 충분합니다
-    # service-name: 자동으로 레포 이름 사용
-    # 필요시에만 아래 주석을 해제하여 사용:
-    # with:
-    #   service-name: custom-service-name
-    secrets:
-      registry-password: ${{ secrets.GITHUB_TOKEN }}
-
-  # PR에서는 빌드/테스트만 수행
-  test-only:
-    if: github.event_name == 'pull_request'
-    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
-
-  rollback:
-    if: github.event.action == 'prereleased'
-    uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
+  app:
+    uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
+    with:
+      service-name: your-service-name      # 선택 (기본값: 레포 이름)
+      registry-org: ghcr.io/now-start      # 선택
+      enable-dev: true                     # DEV+PRD 모드 (false면 PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

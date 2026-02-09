@@ -1,0 +1,80 @@
+name: Reusable Java App Orchestrator
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name for Docker image tagging'
+        required: false
+        type: string
+        default: '${{ github.event.repository.name }}'
+      registry-org:
+        description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
+        required: false
+        type: string
+        default: 'ghcr.io/now-start'
+      enable-dev:
+        description: 'Enable dev environment deployment (true: DEV+PRD, false: PRD only)'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      registry-password:
+        description: 'Registry password/token'
+        required: true
+
+jobs:
+  # PR 에서는 빌드/배포 대신 테스트만 수행
+  test-only:
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
+
+  # main push → 준비 단계 (버전/Java 버전 추출, Pre-release 생성, skip 여부 계산)
+  prepare-dev:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev }}
+    uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
+    with:
+      environment: dev
+
+  # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행
+  build-dev:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
+    needs: prepare-dev
+    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
+    with:
+      java-version: ${{ needs.prepare-dev.outputs.java-version }}
+
+  # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시
+  docker-dev:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
+    needs: [prepare-dev, build-dev]
+    uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      registry-org: ${{ inputs.registry-org }}
+      environment: dev
+      version: ${{ needs.prepare-dev.outputs.version }}
+      java-version: ${{ needs.prepare-dev.outputs.java-version }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+
+  # Pre-release → Release 승격 시: 해당 버전 이미지 latest 프로모트 (PRD 배포)
+  promote-to-prod:
+    if: ${{ github.event_name == 'release' && github.event.action == 'released' }}
+    uses: now-start/workflow/.github/workflows/reusable-promote-to-prod.yaml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      registry-org: ${{ inputs.registry-org }}
+      tag-name: ${{ github.event.release.tag_name }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
+
+  # Release → Pre-release 다운그레이드 시: 직전 stable release 기준 latest 롤백
+  rollback-on-demote:
+    if: ${{ github.event_name == 'release' && github.event.action == 'edited' && github.event.release.prerelease == true && github.event.release.draft == false }}
+    uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
+    with:
+      service-name: ${{ inputs.service-name }}
+      registry-org: ${{ inputs.registry-org }}
+    secrets:
+      registry-password: ${{ secrets.registry-password }}
