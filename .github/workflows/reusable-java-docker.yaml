@@ -105,6 +105,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
+          [ -z "$IMAGE_NAME" ] && exit 0
           docker rmi "$IMAGE_NAME:$VERSION" || true
           docker rmi "$IMAGE_NAME:$POINTER_TAG" || true
           docker builder prune -af || true
