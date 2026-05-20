@@ -115,9 +115,38 @@ jobs:
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Release 이벤트가 현재 module에 해당하는지 중앙에서 판별
+  release-match:
+    if: ${{ github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    outputs:
+      matches-module: ${{ steps.match.outputs.matches-module }}
+    steps:
+      - name: Check release tag module
+        id: match
+        env:
+          MODULE: ${{ inputs.module }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          MATCHES="false"
+
+          if [ -z "$MODULE" ]; then
+            MATCHES="true"
+          else
+            TAG_MODULE=$(echo "$TAG_NAME" | sed -nE 's/^(.+)-[0-9]+\.[0-9]+\.[0-9]+[^ ]*$/\1/p')
+            if [ "$TAG_MODULE" = "$MODULE" ]; then
+              MATCHES="true"
+            fi
+          fi
+
+          echo "matches-module=$MATCHES" >> "$GITHUB_OUTPUT"
+          echo "Release tag '$TAG_NAME' matches module '${MODULE:-single-repo}': $MATCHES"
+
   # Pre-release → Release 승격 시: 해당 버전 이미지 latest 프로모트 (PRD 배포)
+  # 모노레포에서는 release tag의 module이 현재 module과 일치할 때만 처리
   promote-to-prod:
-    if: ${{ github.event_name == 'release' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
+    needs: release-match
+    if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
     uses: now-start/workflow/.github/workflows/reusable-promote-to-prod.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}
@@ -127,8 +156,10 @@ jobs:
       registry-password: ${{ secrets.registry-password }}
 
   # Release → Pre-release 다운그레이드 시: 직전 stable release 기준 latest 롤백
+  # 모노레포에서는 release tag의 module이 현재 module과 일치할 때만 처리
   rollback-on-demote:
-    if: ${{ github.event_name == 'release' && (github.event.action == 'prereleased' || github.event.action == 'edited') && github.event.release.prerelease == true && github.event.release.draft == false }}
+    needs: release-match
+    if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && (github.event.action == 'prereleased' || github.event.action == 'edited') && github.event.release.prerelease == true && github.event.release.draft == false }}
     uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}

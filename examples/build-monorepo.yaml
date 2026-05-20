@@ -1,14 +1,14 @@
 # 모노레포 (Monorepo) 예시
 # 하나의 레포에 여러 Gradle 서브모듈이 존재하는 경우
-# 변경된 모듈만 빌드하고, 릴리스도 모듈별로 독립 관리
+# 각 모듈의 Gradle version/tag 기준으로 릴리스 여부를 판단
+# 버전이 변경되지 않은 모듈은 reusable workflow 내부에서 skip
 # 레포의 .github/workflows/build.yaml 파일로 저장하여 사용
 #
 # 태그 형식: {module}-{version}  예) config-2.1.5, gateway-4.8.0
 # Docker 이미지: ghcr.io/now-start/{module}:{version}  예) ghcr.io/now-start/config:2.1.5
 #
-# 주의: startsWith 방식은 prefix 충돌 위험이 있습니다.
-#       모듈 이름이 다른 모듈 이름의 prefix가 되지 않도록 설계하세요.
-#       (예: 'config'와 'config-service' 혼용 금지)
+# 주의: release 처리 시 태그에서 module/version을 파싱하므로
+#       태그 형식({module}-{version})을 반드시 지켜야 합니다.
 
 name: Platform CI/CD
 
@@ -28,46 +28,7 @@ permissions:
   packages: write
 
 jobs:
-  # 변경된 모듈 감지 (push/PR 이벤트에서만 유효)
-  changes:
-    if: ${{ github.event_name != 'release' }}
-    runs-on: ubuntu-latest
-    outputs:
-      config: ${{ steps.filter.outputs.config }}
-      eureka: ${{ steps.filter.outputs.eureka }}
-      admin: ${{ steps.filter.outputs.admin }}
-      gateway: ${{ steps.filter.outputs.gateway }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            config:
-              - 'config/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-            eureka:
-              - 'eureka/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-            admin:
-              - 'admin/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-            gateway:
-              - 'gateway/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-
   config:
-    needs: changes
-    # push: 해당 경로 변경 시 / release: 이 모듈의 태그(config-*)일 때만 실행
-    if: ${{ always() && (needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: config          # Gradle 서브모듈 이름 (:config:build, :config:bootBuildImage 등)
@@ -75,8 +36,6 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   eureka:
-    needs: changes
-    if: ${{ always() && (needs.changes.outputs.eureka == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'eureka-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: eureka
@@ -84,8 +43,6 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   admin:
-    needs: changes
-    if: ${{ always() && (needs.changes.outputs.admin == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'admin-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: admin
@@ -93,8 +50,6 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   gateway:
-    needs: changes
-    if: ${{ always() && (needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: gateway

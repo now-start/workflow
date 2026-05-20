@@ -56,7 +56,7 @@ jobs:
 ### 패턴 2 — 모노레포 (Monorepo)
 
 하나의 레포에 여러 Gradle 서브모듈이 존재하는 경우입니다.  
-변경된 모듈만 빌드/배포하고, 릴리스도 모듈별로 독립 관리합니다.
+각 모듈의 Gradle version/tag 기준으로 릴리스 여부를 판단하고, 릴리스도 모듈별로 독립 관리합니다.
 
 ```yaml
 # .github/workflows/build.yaml
@@ -75,33 +75,7 @@ permissions:
   packages: write
 
 jobs:
-  changes:
-    if: ${{ github.event_name != 'release' }}
-    runs-on: ubuntu-latest
-    outputs:
-      config: ${{ steps.filter.outputs.config }}
-      gateway: ${{ steps.filter.outputs.gateway }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            config:
-              - 'config/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-            gateway:
-              - 'gateway/**'
-              - 'gradle/**'
-              - 'build.gradle'
-              - 'settings.gradle'
-
   config:
-    needs: changes
-    # push 시 경로 변경 감지 OR 해당 모듈 태그의 릴리스 이벤트만 처리
-    if: ${{ always() && (needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: config
@@ -109,8 +83,6 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   gateway:
-    needs: changes
-    if: ${{ always() && (needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: gateway
@@ -120,10 +92,10 @@ jobs:
 
 - 태그 형식: `{module}-{version}` (예: `config-2.1.5`, `gateway-4.8.0`)
 - Docker 이미지: `ghcr.io/now-start/config:2.1.5` (`module`을 이미지 이름으로 사용하고, 이미지 태그는 semver만 사용)
-- 릴리스 이벤트는 태그 prefix로 해당 모듈 job만 트리거
+- push 이벤트에서는 모든 모듈 workflow를 호출하되, 이미 같은 tag가 존재하는 모듈은 내부 prepare 단계에서 skip
+- release 이벤트에서는 reusable workflow 내부에서 tag의 module을 파싱해 해당 모듈만 promote/rollback
 
-> **주의**: `startsWith(tag, 'config-')` 방식은 prefix 충돌 위험이 있습니다.  
-> 모듈 이름이 다른 모듈 이름의 prefix가 되지 않도록 설계하세요 (예: `config`와 `config-service` 혼용 금지).
+> **주의**: release 처리 시 태그에서 module/version을 파싱하므로 `{module}-{version}` 형식을 지켜야 합니다.
 
 ---
 
@@ -208,7 +180,7 @@ release 이벤트 (prerelease → released, PRD 프로모트)
 
 release 이벤트 (released → prereleased, 롤백)
   └─ rollback-on-demote (reusable-rollback.yaml)
-       ├─ 모노레포: {module}- prefix로 릴리스 목록 필터링
+       ├─ 모노레포: 태그에서 module을 파싱해 릴리스 목록 필터링
        ├─ 직전 stable 릴리스 선택
        ├─ 태그에서 semver 추출
        └─ 해당 버전 이미지를 :latest 로 재태깅/푸시
@@ -229,5 +201,5 @@ release 이벤트 (released → prereleased, 롤백)
 
 - ✅ **일관성**: 모든 서비스가 동일한 배포 프로세스 사용
 - ✅ **유지보수성**: 중앙에서 워크플로우 관리
-- ✅ **효율성**: 변경된 모듈만 빌드 (모노레포 경로 필터)
+- ✅ **효율성**: 이미 릴리스된 버전/tag는 자동 skip
 - ✅ **확장성**: 단일 레포/모노레포 모두 동일한 재사용 워크플로우로 지원

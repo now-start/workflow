@@ -42,44 +42,59 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MODULE: ${{ inputs.module }}
         run: |
-          if [ -n "$MODULE" ]; then
-            # Monorepo: filter releases whose tag starts with "<module>-"
-            PREFIX="${MODULE}-"
-            LATEST_INFO=$(gh release list --limit 100 --json tagName,isPrerelease \
-              --jq "[.[] | select(.tagName | startswith(\"$PREFIX\"))] | .[0] | \"\(.tagName)|\(.isPrerelease)\"")
-          else
-            LATEST_INFO=$(gh release list --limit 1 --json tagName,isPrerelease \
-              --jq '.[0] | "\(.tagName)|\(.isPrerelease)"')
+          RELEASE_LINES=$(gh release list --limit 100 --json tagName,isPrerelease \
+            --jq '.[] | [.tagName, .isPrerelease] | @tsv')
+
+          CANDIDATE_RELEASES=()
+          while IFS=$'\t' read -r TAG IS_PRERELEASE; do
+            [ -n "$TAG" ] || continue
+
+            if [ -n "$MODULE" ]; then
+              TAG_MODULE=$(echo "$TAG" | sed -nE 's/^(.+)-[0-9]+\.[0-9]+\.[0-9]+[^ ]*$/\1/p')
+              [ "$TAG_MODULE" = "$MODULE" ] || continue
+            fi
+
+            CANDIDATE_RELEASES+=("$TAG|$IS_PRERELEASE")
+          done <<< "$RELEASE_LINES"
+
+          if [ ${#CANDIDATE_RELEASES[@]} -eq 0 ]; then
+            echo "❌ No releases found"
+            exit 1
           fi
+
+          LATEST_INFO="${CANDIDATE_RELEASES[0]}"
 
           IFS='|' read -r LATEST_TAG LATEST_IS_PRERELEASE <<< "$LATEST_INFO"
 
-          if [ -n "$MODULE" ]; then
-            PREFIX="${MODULE}-"
+          LAST_RELEASE=""
+          STABLE_SEEN=0
+          for RELEASE_INFO in "${CANDIDATE_RELEASES[@]}"; do
+            IFS='|' read -r TAG IS_PRERELEASE <<< "$RELEASE_INFO"
+            [ "$IS_PRERELEASE" = "false" ] || continue
+
             if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
-              LAST_RELEASE=$(gh release list --limit 100 --json tagName,isPrerelease \
-                --jq "[.[] | select(.tagName | startswith(\"$PREFIX\")) | select(.isPrerelease == false)] | .[0].tagName")
-            else
-              LAST_RELEASE=$(gh release list --limit 100 --json tagName,isPrerelease \
-                --jq "[.[] | select(.tagName | startswith(\"$PREFIX\")) | select(.isPrerelease == false)] | .[1].tagName")
+              LAST_RELEASE="$TAG"
+              break
             fi
-          else
-            if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
-              LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 1 --json tagName \
-                --jq '.[0].tagName')
-            else
-              LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 2 --json tagName \
-                --jq '.[1].tagName')
+
+            STABLE_SEEN=$((STABLE_SEEN + 1))
+            if [ "$STABLE_SEEN" -eq 2 ]; then
+              LAST_RELEASE="$TAG"
+              break
             fi
-          fi
+          done
 
           if [ -z "$LAST_RELEASE" ]; then
             echo "❌ No stable release found"
             exit 1
           fi
 
-          # Strip optional module prefix (e.g. "config-2.1.5" → "2.1.5") for Docker image tag
-          VERSION=$(echo "$LAST_RELEASE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*$')
+          # Strip optional module prefix (e.g. "config-2.1.5" -> "2.1.5") for Docker image tag
+          if [ -n "$MODULE" ]; then
+            VERSION=$(echo "$LAST_RELEASE" | sed -nE 's/^.+-([0-9]+\.[0-9]+\.[0-9]+[^ ]*)$/\1/p')
+          else
+            VERSION=$(echo "$LAST_RELEASE" | sed -nE 's/^([0-9]+\.[0-9]+\.[0-9]+[^ ]*)$/\1/p')
+          fi
 
           if [ -z "$VERSION" ]; then
             echo "❌ Could not extract semver from tag: $LAST_RELEASE"
