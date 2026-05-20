@@ -1,5 +1,6 @@
-# 각 서비스에서 사용할 워크플로우 예제
-# 서비스 레포의 .github/workflows/build.yml 파일로 저장하여 사용
+# 단일 레포 (Single Repo) 예시
+# 서비스 하나가 독립 레포로 존재하는 경우
+# 레포의 .github/workflows/build.yaml 파일로 저장하여 사용
 
 name: App CI/CD
 
@@ -12,8 +13,8 @@ on:
       - main
   release:
     types:
-      - released     # Pre-release → Release (PRD deploy)
-      - prereleased  # Release → Pre-release (rollback)
+      - released     # Pre-release → Release: PRD `:latest` 프로모트
+      - prereleased  # Release → Pre-release: 직전 stable로 롤백
 
 permissions:
   contents: write
@@ -23,8 +24,8 @@ jobs:
   app:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
-      service-name: your-service-name      # 선택 (기본값: 레포 이름)
-      registry-org: ghcr.io/now-start      # 선택
-      enable-dev: true                     # DEV+PRD 모드 (false면 PRD 전용)
+      # service-name: your-service-name  # 생략 시 레포 이름 사용
+      # registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
+      # enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

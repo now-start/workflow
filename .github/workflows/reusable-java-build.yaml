@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: 'prd'
+      module:
+        description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -28,6 +33,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
     with:
       environment: ${{ inputs.environment }}
+      module: ${{ inputs.module }}
 
   build:
     needs: prepare
@@ -35,6 +41,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
     with:
       java-version: ${{ needs.prepare.outputs.java-version }}
+      module: ${{ inputs.module }}
 
   docker:
     needs: [prepare, build]
@@ -46,5 +53,6 @@ jobs:
       environment: ${{ inputs.environment }}
       version: ${{ needs.prepare.outputs.version }}
       java-version: ${{ needs.prepare.outputs.java-version }}
+      module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}

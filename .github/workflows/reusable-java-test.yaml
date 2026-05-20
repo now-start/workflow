@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: 'temurin'
+      module:
+        description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   test:
@@ -20,21 +25,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate module name
+        if: ${{ inputs.module != '' }}
+        run: |
+          MODULE="${{ inputs.module }}"
+          if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
+            exit 1
+          fi
+
       - name: Detect Java version
         id: java-info
         run: |
           if [ -n "${{ inputs.java-version }}" ]; then
             VERSION="${{ inputs.java-version }}"
           else
-            VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
-            VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
-            
+            MODULE="${{ inputs.module }}"
+            BUILD_FILE="${MODULE:+$MODULE/}build.gradle"
+
+            VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')
+            VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')}
+
             if [ -z "$VERSION" ]; then
-              echo "❌ Error: Could not extract Java version from build.gradle"
+              echo "❌ Error: Could not extract Java version from $BUILD_FILE"
               exit 1
             fi
           fi
-          
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "✅ Detected Java version: $VERSION"
 
@@ -50,7 +67,9 @@ jobs:
 
       - name: Build and test
         run: |
-          ./gradlew build --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
+          MODULE="${{ inputs.module }}"
+          GRADLE_TASK="${MODULE:+:$MODULE:}build"
+          ./gradlew $GRADLE_TASK --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
           
       - name: Summary
         if: always()

@@ -8,10 +8,18 @@ on:
         required: false
         type: string
         default: 'prd'
+      module:
+        description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     outputs:
       version:
-        description: 'Project version extracted from Gradle'
+        description: 'Project version extracted from Gradle (semver only, used for Docker image tag)'
         value: ${{ jobs.prepare.outputs.version }}
+      tag-name:
+        description: 'Git tag name. Includes module prefix for multi-module (e.g., config-service-2.1.5)'
+        value: ${{ jobs.prepare.outputs.tag-name }}
       java-version:
         description: 'Detected Java version'
         value: ${{ jobs.prepare.outputs.java-version }}
@@ -24,23 +32,36 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag-name: ${{ steps.version.outputs.tag-name }}
       java-version: ${{ steps.java-info.outputs.version }}
       should-skip: ${{ steps.check-skip.outputs.skip }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate module name
+        if: ${{ inputs.module != '' }}
+        run: |
+          MODULE="${{ inputs.module }}"
+          if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
+            exit 1
+          fi
+
       - name: Detect Java version
         id: java-info
         run: |
-          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" build.gradle | head -1 | sed -E 's/[^0-9]//g')
-          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" build.gradle | head -1 | sed -E 's/[^0-9]//g')}
+          MODULE="${{ inputs.module }}"
+          BUILD_FILE="${MODULE:+$MODULE/}build.gradle"
+
+          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')
+          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')}
 
           if [ -z "$VERSION" ]; then
-            echo "❌ Error: Could not extract Java version from build.gradle"
+            echo "❌ Error: Could not extract Java version from $BUILD_FILE"
             exit 1
           fi
-          
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "✅ Detected Java version: $VERSION"
 
@@ -54,15 +75,22 @@ jobs:
       - name: Extract version from build.gradle
         id: version
         run: |
+          MODULE="${{ inputs.module }}"
           chmod +x gradlew
-          VERSION=$(./gradlew properties -q --no-daemon | grep "^version:" | awk '{print $2}')
-          
+
+          GRADLE_TASK="${MODULE:+:$MODULE:}properties"
+          VERSION=$(./gradlew $GRADLE_TASK -q --no-daemon | grep "^version:" | awk '{print $2}')
+
           if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
             echo "❌ Error: Could not extract version from Gradle properties"
             exit 1
           fi
+
+          TAG_NAME="${MODULE:+$MODULE-}$VERSION"
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "✅ Detected project version: $VERSION"
+          echo "tag-name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Detected project version: $VERSION (tag: $TAG_NAME)"
 
       - name: Check if build should be skipped
         id: check-skip
@@ -70,6 +98,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          TAG_NAME="${{ steps.version.outputs.tag-name }}"
           SKIP="false"
           REASON=""
 
@@ -80,11 +109,11 @@ jobs:
             HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
               -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/$VERSION")
-            
+              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/$TAG_NAME")
+
             if [ "$HTTP_STATUS" = "200" ]; then
               SKIP="true"
-              REASON="Tag $VERSION already exists"
+              REASON="Tag $TAG_NAME already exists"
             fi
           fi
 
@@ -93,9 +122,13 @@ jobs:
 
           echo "### 📊 Prepare Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: \`$TAG_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment**: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
-          
+          if [ -n "${{ inputs.module }}" ]; then
+            echo "- **Module**: \`${{ inputs.module }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
           if [ "$SKIP" = "true" ]; then
             echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
           fi

@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: 'ghcr.io/now-start'
+      module:
+        description: 'Gradle submodule name (e.g., config). Used to filter releases in monorepo. Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -31,16 +36,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_INFO=$(gh release list --limit 1 --json tagName,isPrerelease \
-            --jq '.[0] | "\(.tagName)|\(.isPrerelease)"')
+          MODULE="${{ inputs.module }}"
+
+          if [ -n "$MODULE" ]; then
+            # Monorepo: filter releases whose tag starts with "<module>-"
+            PREFIX="${MODULE}-"
+            LATEST_INFO=$(gh release list --limit 100 --json tagName,isPrerelease \
+              --jq "[.[] | select(.tagName | startswith(\"$PREFIX\"))] | .[0] | \"\(.tagName)|\(.isPrerelease)\"")
+          else
+            LATEST_INFO=$(gh release list --limit 1 --json tagName,isPrerelease \
+              --jq '.[0] | "\(.tagName)|\(.isPrerelease)"')
+          fi
+
           IFS='|' read -r LATEST_TAG LATEST_IS_PRERELEASE <<< "$LATEST_INFO"
 
-          if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
-            LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 1 --json tagName \
-              --jq '.[0].tagName')
+          if [ -n "$MODULE" ]; then
+            PREFIX="${MODULE}-"
+            if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
+              LAST_RELEASE=$(gh release list --limit 100 --json tagName,isPrerelease \
+                --jq "[.[] | select(.tagName | startswith(\"$PREFIX\")) | select(.isPrerelease == false)] | .[0].tagName")
+            else
+              LAST_RELEASE=$(gh release list --limit 100 --json tagName,isPrerelease \
+                --jq "[.[] | select(.tagName | startswith(\"$PREFIX\")) | select(.isPrerelease == false)] | .[1].tagName")
+            fi
           else
-            LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 2 --json tagName \
-              --jq '.[1].tagName')
+            if [ "$LATEST_IS_PRERELEASE" = "true" ]; then
+              LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 1 --json tagName \
+                --jq '.[0].tagName')
+            else
+              LAST_RELEASE=$(gh release list --exclude-pre-releases --limit 2 --json tagName \
+                --jq '.[1].tagName')
+            fi
           fi
 
           if [ -z "$LAST_RELEASE" ]; then
@@ -48,8 +74,17 @@ jobs:
             exit 1
           fi
 
+          # Strip optional module prefix (e.g. "config-2.1.5" → "2.1.5") for Docker image tag
+          VERSION=$(echo "$LAST_RELEASE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*$')
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ Could not extract semver from tag: $LAST_RELEASE"
+            exit 1
+          fi
+
           echo "last=$LAST_RELEASE" >> $GITHUB_OUTPUT
-          echo "✅ Last stable release: $LAST_RELEASE"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "✅ Last stable release: $LAST_RELEASE (version: $VERSION)"
 
       - name: Log in to GHCR
         run: |
@@ -58,7 +93,7 @@ jobs:
       - name: Retag last stable image as latest
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          VERSION="${{ steps.last_release.outputs.last }}"
+          VERSION="${{ steps.last_release.outputs.version }}"
 
           echo "🔄 Rolling back $IMAGE_NAME:$VERSION → $IMAGE_NAME:latest"
 

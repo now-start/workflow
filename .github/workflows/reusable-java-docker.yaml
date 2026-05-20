@@ -26,6 +26,11 @@ on:
         description: 'Java version for bootBuildImage'
         required: true
         type: string
+      module:
+        description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -48,10 +53,20 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Validate module name
+        if: ${{ inputs.module != '' }}
+        run: |
+          MODULE="${{ inputs.module }}"
+          if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
+            exit 1
+          fi
+
       - name: Build and Push Docker image
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
           VERSION="${{ inputs.version }}"
+          MODULE="${{ inputs.module }}"
 
           if [ "${{ inputs.environment }}" = "dev" ]; then
             POINTER_TAG="dev"
@@ -59,8 +74,10 @@ jobs:
             POINTER_TAG="latest"
           fi
 
+          GRADLE_TASK="${MODULE:+:$MODULE:}bootBuildImage"
+
           echo "🏗️ Building Docker image: $IMAGE_NAME:$VERSION"
-          ./gradlew bootBuildImage \
+          ./gradlew $GRADLE_TASK \
             --imageName="$IMAGE_NAME:$VERSION" \
             --build-cache \
             -Dorg.gradle.jvmargs="-Xmx2g" \

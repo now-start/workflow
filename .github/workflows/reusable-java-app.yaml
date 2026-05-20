@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      module:
+        description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -28,6 +33,8 @@ jobs:
   test-only:
     if: ${{ github.event_name == 'pull_request' }}
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
+    with:
+      module: ${{ inputs.module }}
 
   # main push + DEV 모드 → 준비 단계 (버전/Java 버전 추출, Pre-release 생성, skip 여부 계산)
   prepare-dev:
@@ -35,6 +42,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
     with:
       environment: dev
+      module: ${{ inputs.module }}
 
   # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행
   build-dev:
@@ -43,6 +51,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
     with:
       java-version: ${{ needs.prepare-dev.outputs.java-version }}
+      module: ${{ inputs.module }}
 
   # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시
   docker-dev:
@@ -55,6 +64,7 @@ jobs:
       environment: dev
       version: ${{ needs.prepare-dev.outputs.version }}
       java-version: ${{ needs.prepare-dev.outputs.java-version }}
+      module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
@@ -64,7 +74,7 @@ jobs:
     needs: [prepare-dev, docker-dev]
     uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
     with:
-      tag-name: ${{ needs.prepare-dev.outputs.version }}
+      tag-name: ${{ needs.prepare-dev.outputs.tag-name }}
       prerelease: true
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -75,6 +85,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
     with:
       environment: prd
+      module: ${{ inputs.module }}
 
   # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행 (PRD-only)
   build-prd:
@@ -83,6 +94,7 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
     with:
       java-version: ${{ needs.prepare-prd.outputs.java-version }}
+      module: ${{ inputs.module }}
 
   # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시 (PRD-only)
   docker-prd:
@@ -95,6 +107,7 @@ jobs:
       environment: prd
       version: ${{ needs.prepare-prd.outputs.version }}
       java-version: ${{ needs.prepare-prd.outputs.java-version }}
+      module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
@@ -104,7 +117,7 @@ jobs:
     needs: [prepare-prd, docker-prd]
     uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
     with:
-      tag-name: ${{ needs.prepare-prd.outputs.version }}
+      tag-name: ${{ needs.prepare-prd.outputs.tag-name }}
       prerelease: false
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -127,5 +140,6 @@ jobs:
     with:
       service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
+      module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}

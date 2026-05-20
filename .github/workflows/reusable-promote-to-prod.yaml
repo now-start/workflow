@@ -36,7 +36,14 @@ jobs:
       - name: Promote image to latest
         run: |
           IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          VERSION="${{ inputs.tag-name }}"
+          TAG_NAME="${{ inputs.tag-name }}"
+          # Strip optional module prefix (e.g. "config-2.1.5" → "2.1.5")
+          VERSION=$(echo "$TAG_NAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*$')
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ Could not extract semver from tag: $TAG_NAME"
+            exit 1
+          fi
 
           echo "🚀 Promoting $IMAGE_NAME:$VERSION → $IMAGE_NAME:latest"
 
