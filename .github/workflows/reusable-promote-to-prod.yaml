@@ -3,11 +3,6 @@ name: Reusable Promote Image to Prod
 on:
   workflow_call:
     inputs:
-      service-name:
-        description: 'Service name for Docker image tagging'
-        required: false
-        type: string
-        default: '${{ github.event.repository.name }}'
       registry-org:
         description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
         required: false
@@ -17,6 +12,11 @@ on:
         description: 'Git tag name for the release (e.g., 1.2.3)'
         required: true
         type: string
+      module:
+        description: 'Gradle submodule name. Used as Docker image name in monorepo. Empty for single-module projects.'
+        required: false
+        type: string
+        default: ''
     secrets:
       registry-password:
         description: 'Registry password/token'
@@ -29,14 +29,36 @@ jobs:
       - name: Checkout (for gh and git context)
         uses: actions/checkout@v4
 
-      - name: Log in to GHCR
+      - name: Validate module name
+        if: ${{ inputs.module != '' }}
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
-          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
+            exit 1
+          fi
+
+      - name: Log in to container registry
+        env:
+          REGISTRY_ORG: ${{ inputs.registry-org }}
+          REGISTRY_PASSWORD: ${{ secrets.registry-password }}
+        run: |
+          REGISTRY_HOST="${REGISTRY_ORG%%/*}"
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u ${{ github.actor }} --password-stdin
 
       - name: Promote image to latest
+        env:
+          MODULE: ${{ inputs.module }}
+          REGISTRY_ORG: ${{ inputs.registry-org }}
+          TAG_NAME: ${{ inputs.tag-name }}
         run: |
-          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          TAG_NAME="${{ inputs.tag-name }}"
+          SERVICE_NAME="$MODULE"
+          if [ -z "$SERVICE_NAME" ]; then
+            SERVICE_NAME="${{ github.event.repository.name }}"
+          fi
+
+          IMAGE_NAME="$REGISTRY_ORG/$SERVICE_NAME"
           # Strip optional module prefix (e.g. "config-2.1.5" → "2.1.5")
           VERSION=$(echo "$TAG_NAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^ ]*$')
 
@@ -52,5 +74,5 @@ jobs:
           docker push "$IMAGE_NAME:latest"
 
           echo "### 🚀 Promote to Latest (Prod)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`$SERVICE_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Promoted**: \`${VERSION}\` → \`latest\`" >> $GITHUB_STEP_SUMMARY

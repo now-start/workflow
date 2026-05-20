@@ -27,10 +27,9 @@ jobs:
       - name: Ensure tag and stable release
         env:
           GITHUB_TOKEN: ${{ secrets.github-token }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ inputs.tag-name }}
         run: |
-          TAG="${{ inputs.tag-name }}"
-          PRERELEASE="${{ inputs.prerelease }}"
-
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
 

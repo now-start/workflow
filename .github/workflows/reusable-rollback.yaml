@@ -3,11 +3,6 @@ name: Reusable Rollback
 on:
   workflow_call:
     inputs:
-      service-name:
-        description: 'Service name for Docker image tagging'
-        required: false
-        type: string
-        default: '${{ github.event.repository.name }}'
       registry-org:
         description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
         required: false
@@ -31,13 +26,22 @@ jobs:
       - name: Checkout (for gh cli context)
         uses: actions/checkout@v4
 
+      - name: Validate module name
+        if: ${{ inputs.module != '' }}
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+            echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
+            exit 1
+          fi
+
       - name: Get last stable release
         id: last_release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODULE: ${{ inputs.module }}
         run: |
-          MODULE="${{ inputs.module }}"
-
           if [ -n "$MODULE" ]; then
             # Monorepo: filter releases whose tag starts with "<module>-"
             PREFIX="${MODULE}-"
@@ -86,14 +90,26 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "✅ Last stable release: $LAST_RELEASE (version: $VERSION)"
 
-      - name: Log in to GHCR
+      - name: Log in to container registry
+        env:
+          REGISTRY_ORG: ${{ inputs.registry-org }}
+          REGISTRY_PASSWORD: ${{ secrets.registry-password }}
         run: |
-          echo "${{ secrets.registry-password }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          REGISTRY_HOST="${REGISTRY_ORG%%/*}"
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u ${{ github.actor }} --password-stdin
 
       - name: Retag last stable image as latest
+        env:
+          MODULE: ${{ inputs.module }}
+          REGISTRY_ORG: ${{ inputs.registry-org }}
+          VERSION: ${{ steps.last_release.outputs.version }}
         run: |
-          IMAGE_NAME="${{ inputs.registry-org }}/${{ inputs.service-name }}"
-          VERSION="${{ steps.last_release.outputs.version }}"
+          SERVICE_NAME="$MODULE"
+          if [ -z "$SERVICE_NAME" ]; then
+            SERVICE_NAME="${{ github.event.repository.name }}"
+          fi
+
+          IMAGE_NAME="$REGISTRY_ORG/$SERVICE_NAME"
 
           echo "🔄 Rolling back $IMAGE_NAME:$VERSION → $IMAGE_NAME:latest"
 
@@ -102,7 +118,15 @@ jobs:
           docker push "$IMAGE_NAME:latest"
 
       - name: Summary
+        env:
+          LAST_RELEASE: ${{ steps.last_release.outputs.last }}
+          MODULE: ${{ inputs.module }}
         run: |
+          SERVICE_NAME="$MODULE"
+          if [ -z "$SERVICE_NAME" ]; then
+            SERVICE_NAME="${{ github.event.repository.name }}"
+          fi
+
           echo "### 🔁 Rollback Successful" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: \`${{ inputs.service-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Restored**: \`${{ steps.last_release.outputs.last }}\` → \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`$SERVICE_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Restored**: \`$LAST_RELEASE\` → \`latest\`" >> $GITHUB_STEP_SUMMARY

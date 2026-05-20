@@ -3,11 +3,6 @@ name: Reusable Java Build and Deploy (Legacy Wrapper)
 on:
   workflow_call:
     inputs:
-      service-name:
-        description: 'Service name for Docker image tagging'
-        required: false
-        type: string
-        default: '${{ github.event.repository.name }}'
       registry-org:
         description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
         required: false
@@ -48,7 +43,6 @@ jobs:
     if: ${{ needs.prepare.outputs.should-skip == 'false' }}
     uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
     with:
-      service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
       environment: ${{ inputs.environment }}
       version: ${{ needs.prepare.outputs.version }}

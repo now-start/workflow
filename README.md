@@ -47,7 +47,7 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- 서비스 이름 기본값: 레포지토리 이름 (예: `nyang-nyang-bot`)
+- Docker 이미지 이름 기본값: 레포지토리 이름 (예: `nyang-nyang-bot`)
 - 태그 형식: `{version}` (예: `5.3.4`)
 - Docker 이미지: `ghcr.io/now-start/nyang-nyang-bot:5.3.4`
 
@@ -76,6 +76,7 @@ permissions:
 
 jobs:
   changes:
+    if: ${{ github.event_name != 'release' }}
     runs-on: ubuntu-latest
     outputs:
       config: ${{ steps.filter.outputs.config }}
@@ -100,27 +101,25 @@ jobs:
   config:
     needs: changes
     # push 시 경로 변경 감지 OR 해당 모듈 태그의 릴리스 이벤트만 처리
-    if: ${{ needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-')) }}
+    if: ${{ always() && (needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: config
-      service-name: config
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   gateway:
     needs: changes
-    if: ${{ needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-')) }}
+    if: ${{ always() && (needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: gateway
-      service-name: gateway
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 - 태그 형식: `{module}-{version}` (예: `config-2.1.5`, `gateway-4.8.0`)
-- Docker 이미지: `ghcr.io/now-start/config:2.1.5` (module prefix 없이 semver만 사용)
+- Docker 이미지: `ghcr.io/now-start/config:2.1.5` (`module`을 이미지 이름으로 사용하고, 이미지 태그는 semver만 사용)
 - 릴리스 이벤트는 태그 prefix로 해당 모듈 job만 트리거
 
 > **주의**: `startsWith(tag, 'config-')` 방식은 prefix 충돌 위험이 있습니다.  
@@ -134,10 +133,9 @@ jobs:
 
 | 매개변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
-| `service-name` | ❌ | 레포지토리 이름 | Docker 이미지 이름 (예: `config`, `nyang-nyang-bot`) |
 | `registry-org` | ❌ | `ghcr.io/now-start` | 컨테이너 레지스트리 조직/네임스페이스 |
 | `enable-dev` | ❌ | `false` | `true` 시 DEV+PRD 모드, `false` 시 PRD 전용 |
-| `module` | ❌ | `''` (비어 있음) | Gradle 서브모듈 이름. 모노레포에서 사용 (예: `config`, `gateway`) |
+| `module` | ❌ | `''` (비어 있음) | Gradle 서브모듈 이름. 모노레포에서는 Docker 이미지 이름으로도 사용 (예: `config`, `gateway`) |
 
 ### 시크릿
 
@@ -151,10 +149,10 @@ jobs:
 
 | 레포 패턴 | Git 태그 | Docker 이미지 |
 |---|---|---|
-| 단일 레포 (`module` 없음) | `{version}` → `5.3.4` | `ghcr.io/now-start/{service-name}:{version}` |
-| 모노레포 (`module: config`) | `{module}-{version}` → `config-2.1.5` | `ghcr.io/now-start/{service-name}:{version}` (module prefix 없음) |
+| 단일 레포 (`module` 없음) | `{version}` → `5.3.4` | `ghcr.io/now-start/{repository}:{version}` |
+| 모노레포 (`module: config`) | `{module}-{version}` → `config-2.1.5` | `ghcr.io/now-start/{module}:{version}` |
 
-Docker 이미지 태그는 항상 semver만 사용합니다. Git 태그의 모듈 prefix는 promote/rollback 시 자동으로 제거됩니다.
+Docker 이미지 이름은 단일 레포에서는 레포지토리 이름, 모노레포에서는 `module` 값을 사용합니다. Docker 이미지 태그는 항상 semver만 사용합니다. Git 태그의 모듈 prefix는 promote/rollback 시 자동으로 제거됩니다.
 
 ---
 

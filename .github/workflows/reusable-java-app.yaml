@@ -3,11 +3,6 @@ name: Reusable Java App Orchestrator
 on:
   workflow_call:
     inputs:
-      service-name:
-        description: 'Service name for Docker image tagging'
-        required: false
-        type: string
-        default: '${{ github.event.repository.name }}'
       registry-org:
         description: 'Registry organization/namespace (e.g., ghcr.io/now-start)'
         required: false
@@ -59,7 +54,6 @@ jobs:
     needs: [prepare-dev, build-dev]
     uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
     with:
-      service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
       environment: dev
       version: ${{ needs.prepare-dev.outputs.version }}
@@ -102,7 +96,6 @@ jobs:
     needs: [prepare-prd, build-prd]
     uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
     with:
-      service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
       environment: prd
       version: ${{ needs.prepare-prd.outputs.version }}
@@ -127,9 +120,9 @@ jobs:
     if: ${{ github.event_name == 'release' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
     uses: now-start/workflow/.github/workflows/reusable-promote-to-prod.yaml@main
     with:
-      service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
       tag-name: ${{ github.event.release.tag_name }}
+      module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
@@ -138,7 +131,6 @@ jobs:
     if: ${{ github.event_name == 'release' && github.event.action == 'prereleased' && github.event.release.prerelease == true && github.event.release.draft == false }}
     uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
     with:
-      service-name: ${{ inputs.service-name }}
       registry-org: ${{ inputs.registry-org }}
       module: ${{ inputs.module }}
     secrets:

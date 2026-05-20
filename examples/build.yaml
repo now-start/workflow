@@ -23,9 +23,8 @@ permissions:
 jobs:
   app:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
-    with:
-      # service-name: your-service-name  # 생략 시 레포 이름 사용
-      # registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
-      # enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
+    # with:
+    #   registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
+    #   enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

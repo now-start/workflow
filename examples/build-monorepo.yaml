@@ -4,7 +4,7 @@
 # 레포의 .github/workflows/build.yaml 파일로 저장하여 사용
 #
 # 태그 형식: {module}-{version}  예) config-2.1.5, gateway-4.8.0
-# Docker 이미지: ghcr.io/now-start/{service-name}:{version}  예) ghcr.io/now-start/config:2.1.5
+# Docker 이미지: ghcr.io/now-start/{module}:{version}  예) ghcr.io/now-start/config:2.1.5
 #
 # 주의: startsWith 방식은 prefix 충돌 위험이 있습니다.
 #       모듈 이름이 다른 모듈 이름의 prefix가 되지 않도록 설계하세요.
@@ -29,6 +29,7 @@ permissions:
 jobs:
   # 변경된 모듈 감지 (push/PR 이벤트에서만 유효)
   changes:
+    if: ${{ github.event_name != 'release' }}
     runs-on: ubuntu-latest
     outputs:
       config: ${{ steps.filter.outputs.config }}
@@ -65,40 +66,36 @@ jobs:
   config:
     needs: changes
     # push: 해당 경로 변경 시 / release: 이 모듈의 태그(config-*)일 때만 실행
-    if: ${{ needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-')) }}
+    if: ${{ always() && (needs.changes.outputs.config == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'config-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: config          # Gradle 서브모듈 이름 (:config:build, :config:bootBuildImage 등)
-      service-name: config    # Docker 이미지 이름 (ghcr.io/now-start/config)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   eureka:
     needs: changes
-    if: ${{ needs.changes.outputs.eureka == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'eureka-')) }}
+    if: ${{ always() && (needs.changes.outputs.eureka == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'eureka-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: eureka
-      service-name: eureka
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   admin:
     needs: changes
-    if: ${{ needs.changes.outputs.admin == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'admin-')) }}
+    if: ${{ always() && (needs.changes.outputs.admin == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'admin-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: admin
-      service-name: admin
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   gateway:
     needs: changes
-    if: ${{ needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-')) }}
+    if: ${{ always() && (needs.changes.outputs.gateway == 'true' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'gateway-'))) }}
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
       module: gateway
-      service-name: gateway
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

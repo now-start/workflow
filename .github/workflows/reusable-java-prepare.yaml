@@ -41,8 +41,9 @@ jobs:
 
       - name: Validate module name
         if: ${{ inputs.module != '' }}
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
-          MODULE="${{ inputs.module }}"
           if [[ ! "$MODULE" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
             echo "❌ Error: Invalid module name '$MODULE'. Only alphanumeric, dash, underscore, and dot are allowed."
             exit 1
@@ -50,20 +51,34 @@ jobs:
 
       - name: Detect Java version
         id: java-info
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
-          MODULE="${{ inputs.module }}"
-          BUILD_FILE="${MODULE:+$MODULE/}build.gradle"
+          BUILD_FILES=()
+          if [ -n "$MODULE" ]; then
+            BUILD_FILES+=("$MODULE/build.gradle" "$MODULE/build.gradle.kts")
+          fi
+          BUILD_FILES+=("build.gradle" "build.gradle.kts")
 
-          VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')
-          VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')}
+          for BUILD_FILE in "${BUILD_FILES[@]}"; do
+            [ -f "$BUILD_FILE" ] || continue
+
+            VERSION=$(grep -Eo "JavaLanguageVersion.of\([0-9]+\)" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')
+            VERSION=${VERSION:-$(grep -Eo "(source|target)Compatibility[[:space:]]*=[[:space:]]*['\"]?[0-9]+['\"]?" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')}
+            VERSION=${VERSION:-$(grep -Eo "JavaVersion\.VERSION_[0-9]+" "$BUILD_FILE" | head -1 | sed -E 's/[^0-9]//g')}
+
+            if [ -n "$VERSION" ]; then
+              break
+            fi
+          done
 
           if [ -z "$VERSION" ]; then
-            echo "❌ Error: Could not extract Java version from $BUILD_FILE"
+            echo "❌ Error: Could not extract Java version from Gradle build files: ${BUILD_FILES[*]}"
             exit 1
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "✅ Detected Java version: $VERSION"
+          echo "✅ Detected Java version: $VERSION ($BUILD_FILE)"
 
       - name: Set up JDK ${{ steps.java-info.outputs.version }}
         uses: actions/setup-java@v4
@@ -74,8 +89,9 @@ jobs:
 
       - name: Extract version from build.gradle
         id: version
+        env:
+          MODULE: ${{ inputs.module }}
         run: |
-          MODULE="${{ inputs.module }}"
           chmod +x gradlew
 
           GRADLE_TASK="${MODULE:+:$MODULE:}properties"
@@ -95,10 +111,13 @@ jobs:
       - name: Check if build should be skipped
         id: check-skip
         env:
+          ENVIRONMENT: ${{ inputs.environment }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JAVA_VERSION: ${{ steps.java-info.outputs.version }}
+          MODULE: ${{ inputs.module }}
+          TAG_NAME: ${{ steps.version.outputs.tag-name }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG_NAME="${{ steps.version.outputs.tag-name }}"
           SKIP="false"
           REASON=""
 
@@ -123,10 +142,10 @@ jobs:
           echo "### 📊 Prepare Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag**: \`$TAG_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: \`${{ inputs.environment }}\`" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ inputs.module }}" ]; then
-            echo "- **Module**: \`${{ inputs.module }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: \`$JAVA_VERSION\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: \`$ENVIRONMENT\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$MODULE" ]; then
+            echo "- **Module**: \`$MODULE\`" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ "$SKIP" = "true" ]; then
