@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (for gh and git context)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Validate module name
         if: ${{ inputs.module != '' }}
