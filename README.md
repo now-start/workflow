@@ -34,7 +34,7 @@ on:
   pull_request:
     branches: [main]
   release:
-    types: [released, prereleased]
+    types: [released, prereleased, edited]
 
 permissions:
   contents: write
@@ -68,7 +68,7 @@ on:
   pull_request:
     branches: [main]
   release:
-    types: [released, prereleased]
+    types: [released, prereleased, edited]
 
 permissions:
   contents: write

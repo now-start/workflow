@@ -21,6 +21,7 @@ on:
     types:
       - released     # Pre-release → Release: 해당 모듈 `:latest` 프로모트
       - prereleased  # Release → Pre-release: 해당 모듈 직전 stable로 롤백
+      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write
