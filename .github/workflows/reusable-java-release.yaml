@@ -17,6 +17,9 @@ on:
         description: 'GitHub token for creating/viewing releases'
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest

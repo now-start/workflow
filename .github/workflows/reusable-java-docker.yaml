@@ -31,6 +31,10 @@ on:
         description: 'Registry password/token'
         required: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   docker:
     runs-on: ubuntu-latest

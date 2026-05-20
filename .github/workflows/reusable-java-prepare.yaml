@@ -27,6 +27,9 @@ on:
         description: 'Whether subsequent build/image steps should be skipped'
         value: ${{ jobs.prepare.outputs.should-skip }}
 
+permissions:
+  contents: read
+
 jobs:
   prepare:
     runs-on: ubuntu-latest

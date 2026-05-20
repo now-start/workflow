@@ -18,6 +18,10 @@ on:
         description: 'Registry password/token'
         required: true
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   rollback:
     runs-on: ubuntu-latest
