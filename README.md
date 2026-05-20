@@ -34,7 +34,10 @@ on:
   pull_request:
     branches: [main]
   release:
-    types: [released, prereleased, edited]
+    types:
+      - released     # Pre-release → Release: PRD `:latest` 프로모트
+      - prereleased  # Release → Pre-release: 직전 stable로 롤백
+      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write
@@ -43,6 +46,9 @@ permissions:
 jobs:
   app:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
+    # with:
+    #   registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
+    #   enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -68,7 +74,10 @@ on:
   pull_request:
     branches: [main]
   release:
-    types: [released, prereleased, edited]
+    types:
+      - released     # Pre-release → Release: 해당 모듈 `:latest` 프로모트
+      - prereleased  # Release → Pre-release: 해당 모듈 직전 stable로 롤백
+      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write
@@ -78,7 +87,7 @@ jobs:
   config:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
-      module: config
+      module: config          # Gradle 서브모듈 이름 (:config:build, :config:bootBuildImage 등)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,7 +100,7 @@ jobs:
 ```
 
 - 태그 형식: `{module}-{version}` (예: `config-2.1.5`, `gateway-4.8.0`)
-- Docker 이미지: `ghcr.io/now-start/config:2.1.5` (`module`을 이미지 이름으로 사용하고, 이미지 태그는 semver만 사용)
+- Docker 이미지: `ghcr.io/now-start/config:2.1.5` (`module`을 이미지 이름으로 사용, 이미지 태그는 semver만)
 - push 이벤트에서는 모든 모듈 workflow를 호출하되, 이미 같은 tag가 존재하는 모듈은 내부 prepare 단계에서 skip
 - release 이벤트에서는 reusable workflow 내부에서 tag의 module을 파싱해 해당 모듈만 promote/rollback
 
@@ -131,14 +140,14 @@ Docker 이미지 이름은 단일 레포에서는 레포지토리 이름, 모노
 ## 워크플로우 실행 과정
 
 1. **PR**: 테스트만 실행 (`reusable-java-test.yaml`)
-2. **main push (PRD-only 모드, `enable-dev: false`)**:
+2. **main push (`enable-dev: false`, PRD-only 모드)**:
    - 버전 추출 → 태그 중복 확인 → 빌드/테스트 → Docker 이미지 푸시 (`:version`, `:latest`) → stable Release 생성
-3. **main push (DEV+PRD 모드, `enable-dev: true`)**:
+3. **main push (`enable-dev: true`, DEV+PRD 모드)**:
    - 버전 추출 → 태그 중복 확인 → 빌드/테스트 → Docker 이미지 푸시 (`:version`, `:dev`) → Pre-release 생성
-4. **Release 승격 (prerelease → released)**:
-   - `:{version}` 이미지를 `:latest`로 프로모트
-5. **Release 다운그레이드 (released → prereleased, 롤백)**:
-   - 직전 stable 릴리스의 이미지를 `:latest`로 재태깅
+4. **Release 승격 (prerelease → released/edited)**:
+   - 태그의 module 확인 → `:{version}` 이미지를 `:latest`로 프로모트
+5. **Release 다운그레이드 (released → prereleased/edited, 롤백)**:
+   - 태그의 module 확인 → 직전 stable 릴리스의 이미지를 `:latest`로 재태깅
 
 ---
 
@@ -149,41 +158,30 @@ PR (pull_request)
   └─ test-only
        └─ reusable-java-test.yaml
 
-main push (enable-dev = false, PRD-only 모드)
-  └─ prepare-prd (reusable-java-prepare.yaml)
+main push
+  └─ prepare (reusable-java-prepare.yaml)
        ├─ build.gradle에서 version / Java version 추출
        ├─ 태그 중복 확인 (should-skip)
        └─ skip == false 인 경우에만:
-            ├─ build-prd (reusable-java-test.yaml)  ← Gradle build & test
-            ├─ docker-prd (reusable-java-docker.yaml)
-            │    └─ 이미지 푸시: :{version}, :latest
-            └─ release-prd (reusable-java-release.yaml)
+            ├─ build (reusable-java-test.yaml)  ← Gradle build & test
+            ├─ docker (reusable-java-docker.yaml)
+            │    └─ enable-dev=false: 이미지 푸시 :{version}, :latest
+            │       enable-dev=true:  이미지 푸시 :{version}, :dev
+            └─ release (reusable-java-release.yaml)
                  └─ tag: {version}  /  {module}-{version} (모노레포)
-                    prerelease = false
+                    enable-dev=false: prerelease=false (stable)
+                    enable-dev=true:  prerelease=true  (pre-release)
 
-main push (enable-dev = true, DEV+PRD 모드)
-  └─ prepare-dev (reusable-java-prepare.yaml)
-       ├─ build.gradle에서 version / Java version 추출
-       ├─ 태그 중복 확인 (should-skip)
-       └─ skip == false 인 경우에만:
-            ├─ build-dev (reusable-java-test.yaml)  ← Gradle build & test
-            ├─ docker-dev (reusable-java-docker.yaml)
-            │    └─ 이미지 푸시: :{version}, :dev
-            └─ release-dev (reusable-java-release.yaml)
-                 └─ tag: {version}  /  {module}-{version} (모노레포)
-                    prerelease = true
-
-release 이벤트 (prerelease → released, PRD 프로모트)
-  └─ promote-to-prod (reusable-promote-to-prod.yaml)
-       ├─ 태그에서 semver 추출 (config-2.1.5 → 2.1.5)
-       └─ 이미지 :{version} → :latest 태깅/푸시
-
-release 이벤트 (released → prereleased, 롤백)
-  └─ rollback-on-demote (reusable-rollback.yaml)
-       ├─ 모노레포: 태그에서 module을 파싱해 릴리스 목록 필터링
-       ├─ 직전 stable 릴리스 선택
-       ├─ 태그에서 semver 추출
-       └─ 해당 버전 이미지를 :latest 로 재태깅/푸시
+release 이벤트
+  └─ release-match
+       └─ tag에서 module 파싱 → 현재 module과 일치 여부 확인
+            ├─ prerelease=false + (released | edited)
+            │    └─ promote-to-prod (reusable-promote-to-prod.yaml)
+            │         └─ 이미지 :{version} → :latest 태깅/푸시
+            └─ prerelease=true + (prereleased | edited)
+                 └─ rollback-on-demote (reusable-rollback.yaml)
+                      ├─ 직전 stable 릴리스 탐색
+                      └─ 해당 버전 이미지를 :latest 로 재태깅/푸시
 ```
 
 ---
