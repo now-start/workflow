@@ -23,6 +23,10 @@ on:
         description: 'Registry password/token'
         required: true
 
+concurrency:
+  group: ${{ github.repository }}-${{ inputs.module || 'root' }}-${{ github.event_name }}-deploy
+  cancel-in-progress: false
+
 jobs:
   # PR 에서는 빌드/배포 대신 테스트만 수행
   test-only:
@@ -31,87 +35,45 @@ jobs:
     with:
       module: ${{ inputs.module }}
 
-  # main push + DEV 모드 → 준비 단계 (버전/Java 버전 추출, Pre-release 생성, skip 여부 계산)
-  prepare-dev:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev }}
+  # main push → 준비 단계 (버전/Java 버전 추출, skip 여부 계산)
+  prepare:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
     with:
-      environment: dev
+      environment: ${{ inputs.enable-dev && 'dev' || 'prd' }}
       module: ${{ inputs.module }}
 
-  # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행
-  build-dev:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
-    needs: prepare-dev
+  # 준비 단계에서 skip=false 인 경우에만 Gradle 빌드/테스트 수행
+  build:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
+    needs: prepare
     uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
     with:
-      java-version: ${{ needs.prepare-dev.outputs.java-version }}
+      java-version: ${{ needs.prepare.outputs.java-version }}
       module: ${{ inputs.module }}
 
-  # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시
-  docker-dev:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
-    needs: [prepare-dev, build-dev]
+  # 빌드 성공 시 Docker 이미지 빌드/푸시
+  docker:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
+    needs: [prepare, build]
     uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}
-      environment: dev
-      version: ${{ needs.prepare-dev.outputs.version }}
-      java-version: ${{ needs.prepare-dev.outputs.java-version }}
+      environment: ${{ inputs.enable-dev && 'dev' || 'prd' }}
+      version: ${{ needs.prepare.outputs.version }}
+      java-version: ${{ needs.prepare.outputs.java-version }}
       module: ${{ inputs.module }}
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
-  # DEV 모드: main push 에서 새 버전이면 dev 프리릴리즈 생성
-  release-dev:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && inputs.enable-dev && needs.prepare-dev.outputs.should-skip == 'false' }}
-    needs: [prepare-dev, docker-dev]
+  # Docker 성공 시 GitHub Release 생성 (enable-dev=true 면 pre-release)
+  release:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
+    needs: [prepare, docker]
     uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
     with:
-      tag-name: ${{ needs.prepare-dev.outputs.tag-name }}
-      prerelease: true
-    secrets:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-
-  # main push + PRD-only 모드 → 준비 단계 (버전/Java 버전 추출, skip 여부 계산)
-  prepare-prd:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev }}
-    uses: now-start/workflow/.github/workflows/reusable-java-prepare.yaml@main
-    with:
-      environment: prd
-      module: ${{ inputs.module }}
-
-  # 준비 단계에서 skip=false 인 경우에만 실제 Gradle 빌드/테스트 수행 (PRD-only)
-  build-prd:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
-    needs: prepare-prd
-    uses: now-start/workflow/.github/workflows/reusable-java-test.yaml@main
-    with:
-      java-version: ${{ needs.prepare-prd.outputs.java-version }}
-      module: ${{ inputs.module }}
-
-  # Gradle 빌드가 성공한 경우에만 Docker 이미지 빌드/푸시 (PRD-only)
-  docker-prd:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
-    needs: [prepare-prd, build-prd]
-    uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
-    with:
-      registry-org: ${{ inputs.registry-org }}
-      environment: prd
-      version: ${{ needs.prepare-prd.outputs.version }}
-      java-version: ${{ needs.prepare-prd.outputs.java-version }}
-      module: ${{ inputs.module }}
-    secrets:
-      registry-password: ${{ secrets.registry-password }}
-
-  # PRD-only 모드: main push 에서 새 버전이면 stable Release 생성
-  release-prd:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.enable-dev && needs.prepare-prd.outputs.should-skip == 'false' }}
-    needs: [prepare-prd, docker-prd]
-    uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
-    with:
-      tag-name: ${{ needs.prepare-prd.outputs.tag-name }}
-      prerelease: false
+      tag-name: ${{ needs.prepare.outputs.tag-name }}
+      prerelease: ${{ inputs.enable-dev }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -143,7 +105,8 @@ jobs:
           echo "Release tag '$TAG_NAME' matches module '${MODULE:-single-repo}': $MATCHES"
 
   # Pre-release → Release 승격 시: 해당 버전 이미지 latest 프로모트 (PRD 배포)
-  # 모노레포에서는 release tag의 module이 현재 module과 일치할 때만 처리
+  # 모노레포에서는 release-match 잡에서 해당 module의 태그만 처리
+  # edited: GitHub UI에서 prerelease 체크박스 해제 시 'released' 대신 'edited'가 발화됨
   promote-to-prod:
     needs: release-match
     if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
@@ -156,7 +119,8 @@ jobs:
       registry-password: ${{ secrets.registry-password }}
 
   # Release → Pre-release 다운그레이드 시: 직전 stable release 기준 latest 롤백
-  # 모노레포에서는 release tag의 module이 현재 module과 일치할 때만 처리
+  # 모노레포에서는 release-match 잡에서 해당 module의 태그만 처리
+  # edited: GitHub UI에서 prerelease 체크박스 체크 시 'prereleased' 대신 'edited'가 발화됨
   rollback-on-demote:
     needs: release-match
     if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && (github.event.action == 'prereleased' || github.event.action == 'edited') && github.event.release.prerelease == true && github.event.release.draft == false }}
