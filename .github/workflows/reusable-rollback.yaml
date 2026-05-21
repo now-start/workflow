@@ -83,7 +83,7 @@ jobs:
 
           LATEST_INFO="${CANDIDATE_RELEASES[0]}"
 
-          IFS='|' read -r LATEST_TAG LATEST_IS_PRERELEASE <<< "$LATEST_INFO"
+          IFS='|' read -r _ LATEST_IS_PRERELEASE <<< "$LATEST_INFO"
 
           LAST_RELEASE=""
           STABLE_SEEN=0
@@ -120,8 +120,8 @@ jobs:
             exit 1
           fi
 
-          echo "last=$LAST_RELEASE" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "last=$LAST_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "✅ Last stable release: $LAST_RELEASE (version: $VERSION)"
 
       - name: Log in to container registry
@@ -164,6 +164,8 @@ jobs:
             SERVICE_NAME="${{ github.event.repository.name }}"
           fi
 
-          echo "### 🔁 Rollback Successful" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: \`$SERVICE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Restored**: \`$LAST_RELEASE\` → \`latest\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 🔁 Rollback Successful"
+            echo "- **Service**: \`$SERVICE_NAME\`"
+            echo "- **Restored**: \`$LAST_RELEASE\` → \`latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"

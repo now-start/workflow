@@ -71,7 +71,7 @@ jobs:
             fi
           fi
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [ -n "${BUILD_FILE:-}" ]; then
             echo "✅ Detected Java version: $VERSION ($BUILD_FILE)"
           else
@@ -93,11 +93,13 @@ jobs:
           MODULE: ${{ inputs.module }}
         run: |
           GRADLE_TASK="${MODULE:+:$MODULE:}build"
-          ./gradlew $GRADLE_TASK --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
+          ./gradlew "$GRADLE_TASK" --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx2g"
           
       - name: Summary
         if: always()
         run: |
-          echo "### 🧪 Test Result" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status**: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 🧪 Test Result"
+            echo "- **Java**: \`${{ steps.java-info.outputs.version }}\`"
+            echo "- **Status**: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -85,7 +85,7 @@ jobs:
           REGISTRY_HOST="${IMAGE_NAME%%/*}"
 
           echo "🏗️ Building Docker image: $IMAGE_NAME:$VERSION"
-          ./gradlew $GRADLE_TASK \
+          ./gradlew "$GRADLE_TASK" \
             --imageName="$IMAGE_NAME:$VERSION" \
             --build-cache \
             -Dorg.gradle.jvmargs="-Xmx2g" \
@@ -100,9 +100,11 @@ jobs:
           docker push "$IMAGE_NAME:$VERSION"
           docker push "$IMAGE_NAME:$POINTER_TAG"
 
-          echo "### 🐳 Docker Images" >> $GITHUB_STEP_SUMMARY
-          echo "- \`$IMAGE_NAME:$VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`$IMAGE_NAME:$POINTER_TAG\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 🐳 Docker Images"
+            echo "- \`$IMAGE_NAME:$VERSION\`"
+            echo "- \`$IMAGE_NAME:$POINTER_TAG\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean up
         if: always()

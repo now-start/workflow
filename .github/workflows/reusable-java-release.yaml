@@ -53,5 +53,5 @@ jobs:
               --generate-notes $EXTRA
           fi
 
-          echo "### 📦 Release" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: \`$TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Release" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tag**: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"

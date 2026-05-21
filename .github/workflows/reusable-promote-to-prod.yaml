@@ -81,6 +81,8 @@ jobs:
           docker tag "$IMAGE_NAME:$VERSION" "$IMAGE_NAME:latest"
           docker push "$IMAGE_NAME:latest"
 
-          echo "### 🚀 Promote to Latest (Prod)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Service**: \`$SERVICE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Promoted**: \`${VERSION}\` → \`latest\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 🚀 Promote to Latest (Prod)"
+            echo "- **Service**: \`$SERVICE_NAME\`"
+            echo "- **Promoted**: \`${VERSION}\` → \`latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"

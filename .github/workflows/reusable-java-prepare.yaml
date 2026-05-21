@@ -80,7 +80,7 @@ jobs:
             exit 1
           fi
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "✅ Detected Java version: $VERSION ($BUILD_FILE)"
 
       - name: Set up JDK ${{ steps.java-info.outputs.version }}
@@ -98,7 +98,7 @@ jobs:
           chmod +x gradlew
 
           GRADLE_TASK="${MODULE:+:$MODULE:}properties"
-          VERSION=$(./gradlew $GRADLE_TASK -q --no-daemon | grep "^version:" | awk '{print $2}')
+          VERSION=$(./gradlew "$GRADLE_TASK" -q --no-daemon | grep "^version:" | awk '{print $2}')
 
           if [ -z "$VERSION" ] || [ "$VERSION" = "unspecified" ]; then
             echo "❌ Error: Could not extract version from Gradle properties"
@@ -107,8 +107,8 @@ jobs:
 
           TAG_NAME="${MODULE:+$MODULE-}$VERSION"
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag-name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag-name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "✅ Detected project version: $VERSION (tag: $TAG_NAME)"
 
       - name: Check if build should be skipped
@@ -139,18 +139,19 @@ jobs:
             fi
           fi
 
-          echo "skip=$SKIP" >> $GITHUB_OUTPUT
-          echo "reason=$REASON" >> $GITHUB_OUTPUT
+          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
-          echo "### 📊 Prepare Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: \`$TAG_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Java**: \`$JAVA_VERSION\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment**: \`$ENVIRONMENT\`" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 📊 Prepare Summary"
+            echo "- **Version**: \`$VERSION\`"
+            echo "- **Tag**: \`$TAG_NAME\`"
+            echo "- **Java**: \`$JAVA_VERSION\`"
+            echo "- **Environment**: \`$ENVIRONMENT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$MODULE" ]; then
-            echo "- **Module**: \`$MODULE\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Module**: \`$MODULE\`" >> "$GITHUB_STEP_SUMMARY"
           fi
-
           if [ "$SKIP" = "true" ]; then
-            echo "- **Status**: ⚠️ Skipped ($REASON)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status**: ⚠️ Skipped ($REASON)" >> "$GITHUB_STEP_SUMMARY"
           fi
