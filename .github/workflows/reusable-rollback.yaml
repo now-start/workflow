@@ -40,8 +40,23 @@ jobs:
             exit 1
           fi
 
+      - name: Verify release is still prerelease
+        id: verify
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          CURRENT=$(gh release view "$TAG_NAME" --json isPrerelease --jq '.isPrerelease')
+          if [ "$CURRENT" != "true" ]; then
+            echo "⚠️ Release $TAG_NAME was already promoted before this job ran. Skipping rollback."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Get last stable release
         id: last_release
+        if: steps.verify.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MODULE: ${{ inputs.module }}
@@ -110,6 +125,7 @@ jobs:
           echo "✅ Last stable release: $LAST_RELEASE (version: $VERSION)"
 
       - name: Log in to container registry
+        if: steps.verify.outputs.skip != 'true'
         env:
           REGISTRY_ORG: ${{ inputs.registry-org }}
           REGISTRY_PASSWORD: ${{ secrets.registry-password }}
@@ -118,6 +134,7 @@ jobs:
           echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u ${{ github.actor }} --password-stdin
 
       - name: Retag last stable image as latest
+        if: steps.verify.outputs.skip != 'true'
         env:
           MODULE: ${{ inputs.module }}
           REGISTRY_ORG: ${{ inputs.registry-org }}
@@ -137,6 +154,7 @@ jobs:
           docker push "$IMAGE_NAME:latest"
 
       - name: Summary
+        if: steps.verify.outputs.skip != 'true'
         env:
           LAST_RELEASE: ${{ steps.last_release.outputs.last }}
           MODULE: ${{ inputs.module }}
