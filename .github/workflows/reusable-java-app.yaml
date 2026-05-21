@@ -59,6 +59,9 @@ jobs:
   docker:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
     needs: [prepare, build]
+    permissions:
+      contents: read
+      packages: write
     uses: now-start/workflow/.github/workflows/reusable-java-docker.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}
@@ -73,6 +76,8 @@ jobs:
   release:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
     needs: [prepare, docker]
+    permissions:
+      contents: write
     uses: now-start/workflow/.github/workflows/reusable-java-release.yaml@main
     with:
       tag-name: ${{ needs.prepare.outputs.tag-name }}
@@ -113,6 +118,9 @@ jobs:
   promote-to-prod:
     needs: release-match
     if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && github.event.release.prerelease == false && (github.event.action == 'released' || github.event.action == 'edited') }}
+    permissions:
+      contents: read
+      packages: write
     uses: now-start/workflow/.github/workflows/reusable-promote-to-prod.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}
@@ -127,6 +135,9 @@ jobs:
   rollback-on-demote:
     needs: release-match
     if: ${{ github.event_name == 'release' && needs.release-match.outputs.matches-module == 'true' && (github.event.action == 'prereleased' || github.event.action == 'edited') && github.event.release.prerelease == true && github.event.release.draft == false }}
+    permissions:
+      contents: read
+      packages: write
     uses: now-start/workflow/.github/workflows/reusable-rollback.yaml@main
     with:
       registry-org: ${{ inputs.registry-org }}
