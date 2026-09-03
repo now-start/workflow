@@ -7,8 +7,7 @@
 # 태그 형식: {module}-{version}  예) config-2.1.5, gateway-4.8.0
 # Docker 이미지: ghcr.io/now-start/{module}:{version}  예) ghcr.io/now-start/config:2.1.5
 #
-# 주의: release 처리 시 태그에서 module/version을 파싱하므로
-#       태그 형식({module}-{version})을 반드시 지켜야 합니다.
+# 운영 배포 버전은 GitOps 저장소의 Compose에서 관리합니다.
 
 name: Platform CI/CD
 
@@ -17,11 +16,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  release:
-    types:
-      - released     # Pre-release → Release: 해당 모듈 `:latest` 프로모트
-      - prereleased  # Release → Pre-release: 해당 모듈 직전 stable로 롤백
-      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write

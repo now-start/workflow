@@ -11,11 +11,6 @@ on:
   pull_request:
     branches:
       - main
-  release:
-    types:
-      - released     # Pre-release → Release: PRD `:latest` 프로모트
-      - prereleased  # Release → Pre-release: 직전 stable로 롤백
-      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write
@@ -26,6 +21,5 @@ jobs:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     # with:
     #   registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
-    #   enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

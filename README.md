@@ -1,31 +1,33 @@
 # now-start/workflow
 
-now-start 조직의 공통 GitHub Actions 워크플로우 저장소입니다.
+Java/Spring Boot 애플리케이션의 공통 CI workflow입니다. 애플리케이션
+저장소는 테스트와 이미지 발행까지만 담당하고, 운영에 배포할 버전은
+[`now-start/gitops`](https://github.com/now-start/gitops)에서 관리합니다.
 
-## 재사용 가능한 워크플로우
+## 책임 경계
 
-### Java Build and Deploy Workflow
+```text
+application repository
+  PR              -> test
+  main push       -> test -> ghcr.io/...:{version} -> GitHub Release
 
-Java/Spring Boot 애플리케이션을 위한 표준화된 CI/CD 파이프라인입니다.
+gitops repository
+  Dependabot PR   -> compose image version update -> merge
 
-#### 기능
-- Gradle 빌드 및 테스트
-- 버전 자동 추출 (build.gradle)
-- Docker 이미지 빌드 및 GHCR 푸시
-- 자동 릴리스/태그 생성
-- 중복 빌드 방지 (기존 태그 체크)
-- **단일 레포 / 모노레포 모두 지원**
+Portainer
+  main polling    -> Docker Swarm stack reconciliation
+```
 
----
+- 이 저장소는 불변 SemVer 이미지와 GitHub Release를 생성합니다.
+- `latest`와 `dev` 같은 가변 포인터 태그는 발행하지 않습니다.
+- 운영 승격과 롤백은 이미지 재태깅이 아니라 GitOps Compose 버전 변경으로
+  수행합니다.
+- Swarm의 `failure_action: rollback`은 배포 도중의 런타임 안전장치이며,
+  Git에 기록된 목표 버전은 별도로 되돌려야 합니다.
 
-## 사용 패턴
-
-### 패턴 1 — 단일 레포 (Single Repo)
-
-서비스 하나가 독립 레포로 존재하는 경우입니다. `module` 없이 최소 설정만으로 동작합니다.
+## 단일 저장소
 
 ```yaml
-# .github/workflows/build.yaml
 name: App CI/CD
 
 on:
@@ -33,11 +35,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  release:
-    types:
-      - released     # Pre-release → Release: PRD `:latest` 프로모트
-      - prereleased  # Release → Pre-release: 직전 stable로 롤백
-      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
 
 permissions:
   contents: write
@@ -46,48 +43,27 @@ permissions:
 jobs:
   app:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
-    # with:
-    #   registry-org: ghcr.io/now-start  # 생략 시 기본값 사용
-    #   enable-dev: true                 # DEV+PRD 모드 (기본값 false = PRD 전용)
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- Docker 이미지 이름 기본값: 레포지토리 이름 (예: `nyang-nyang-bot`)
-- 태그 형식: `{version}` (예: `5.3.4`)
-- Docker 이미지: `ghcr.io/now-start/nyang-nyang-bot:5.3.4`
+Gradle version이 `5.9.8`이면 다음 산출물을 생성합니다.
 
----
+```text
+Git tag:       5.9.8
+Docker image:  ghcr.io/now-start/{repository}:5.9.8
+```
 
-### 패턴 2 — 모노레포 (Monorepo)
+## Gradle 모노레포
 
-하나의 레포에 여러 Gradle 서브모듈이 존재하는 경우입니다.  
-각 모듈의 Gradle version/tag 기준으로 릴리스 여부를 판단하고, 릴리스도 모듈별로 독립 관리합니다.
+모듈마다 같은 reusable workflow를 호출합니다.
 
 ```yaml
-# .github/workflows/build.yaml
-name: Platform CI/CD
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  release:
-    types:
-      - released     # Pre-release → Release: 해당 모듈 `:latest` 프로모트
-      - prereleased  # Release → Pre-release: 해당 모듈 직전 stable로 롤백
-      - edited       # 릴리스 상태 변경이 edited 이벤트로 들어오는 경우 보강
-
-permissions:
-  contents: write
-  packages: write
-
 jobs:
   config:
     uses: now-start/workflow/.github/workflows/reusable-java-app.yaml@main
     with:
-      module: config          # Gradle 서브모듈 이름 (:config:build, :config:bootBuildImage 등)
+      module: config
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -99,105 +75,72 @@ jobs:
       registry-password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- 태그 형식: `{module}-{version}` (예: `config-2.1.5`, `gateway-4.8.0`)
-- Docker 이미지: `ghcr.io/now-start/config:2.1.5` (`module`을 이미지 이름으로 사용, 이미지 태그는 semver만)
-- push 이벤트에서는 모든 모듈 workflow를 호출하되, 이미 같은 tag가 존재하는 모듈은 내부 prepare 단계에서 skip
-- release 이벤트에서는 reusable workflow 내부에서 tag의 module을 파싱해 해당 모듈만 promote/rollback
-
-> **주의**: release 처리 시 태그에서 module/version을 파싱하므로 `{module}-{version}` 형식을 지켜야 합니다.
-
----
-
-## 입력 매개변수
-
-`reusable-java-app.yaml` 호출 시 사용 가능한 파라미터입니다.
-
-| 매개변수 | 필수 | 기본값 | 설명 |
-|---|---|---|---|
-| `registry-org` | ❌ | `ghcr.io/now-start` | 컨테이너 레지스트리 조직/네임스페이스 |
-| `enable-dev` | ❌ | `false` | `true` 시 DEV+PRD 모드, `false` 시 PRD 전용 |
-| `module` | ❌ | `''` (비어 있음) | Gradle 서브모듈 이름. 모노레포에서는 Docker 이미지 이름으로도 사용 (예: `config`, `gateway`) |
-
-### 시크릿
-
-| 시크릿 | 필수 | 설명 |
-|---|---|---|
-| `registry-password` | ✅ | 레지스트리 토큰 (예: `GITHUB_TOKEN`) |
-
----
-
-## 태그 및 Docker 이미지 명명 규칙
-
-| 레포 패턴 | Git 태그 | Docker 이미지 |
-|---|---|---|
-| 단일 레포 (`module` 없음) | `{version}` → `5.3.4` | `ghcr.io/now-start/{repository}:{version}` |
-| 모노레포 (`module: config`) | `{module}-{version}` → `config-2.1.5` | `ghcr.io/now-start/{module}:{version}` |
-
-Docker 이미지 이름은 단일 레포에서는 레포지토리 이름, 모노레포에서는 `module` 값을 사용합니다. Docker 이미지 태그는 항상 semver만 사용합니다. Git 태그의 모듈 prefix는 promote/rollback 시 자동으로 제거됩니다.
-
----
-
-## 워크플로우 실행 과정
-
-1. **PR**: 테스트만 실행 (`reusable-java-test.yaml`)
-2. **main push (`enable-dev: false`, PRD-only 모드)**:
-   - 버전 추출 → 태그 중복 확인 → 빌드/테스트 → Docker 이미지 푸시 (`:version`, `:latest`) → stable Release 생성
-3. **main push (`enable-dev: true`, DEV+PRD 모드)**:
-   - 버전 추출 → 태그 중복 확인 → 빌드/테스트 → Docker 이미지 푸시 (`:version`, `:dev`) → Pre-release 생성
-4. **Release 승격 (prerelease → released/edited)**:
-   - 태그의 module 확인 → `:{version}` 이미지를 `:latest`로 프로모트
-5. **Release 다운그레이드 (released → prereleased/edited, 롤백)**:
-   - 태그의 module 확인 → 직전 stable 릴리스의 이미지를 `:latest`로 재태깅
-
----
-
-## 워크플로우 플로우 (ASCII 다이어그램)
+`config` 모듈의 Gradle version이 `2.1.14`이면 다음 산출물을 생성합니다.
 
 ```text
-PR (pull_request)
-  └─ test-only
-       └─ reusable-java-test.yaml
-
-main push
-  └─ prepare (reusable-java-prepare.yaml)
-       ├─ build.gradle에서 version / Java version 추출
-       ├─ 태그 중복 확인 (should-skip)
-       └─ skip == false 인 경우에만:
-            ├─ build (reusable-java-test.yaml)  ← Gradle build & test
-            ├─ docker (reusable-java-docker.yaml)
-            │    └─ enable-dev=false: 이미지 푸시 :{version}, :latest
-            │       enable-dev=true:  이미지 푸시 :{version}, :dev
-            └─ release (reusable-java-release.yaml)
-                 └─ tag: {version}  /  {module}-{version} (모노레포)
-                    enable-dev=false: prerelease=false (stable)
-                    enable-dev=true:  prerelease=true  (pre-release)
-
-release 이벤트
-  └─ release-match
-       └─ tag에서 module 파싱 → 현재 module과 일치 여부 확인
-            ├─ prerelease=false + (released | edited)
-            │    └─ promote-to-prod (reusable-promote-to-prod.yaml)
-            │         └─ 이미지 :{version} → :latest 태깅/푸시
-            └─ prerelease=true + (prereleased | edited)
-                 └─ rollback-on-demote (reusable-rollback.yaml)
-                      ├─ 직전 stable 릴리스 탐색
-                      └─ 해당 버전 이미지를 :latest 로 재태깅/푸시
+Git tag:       config-2.1.14
+Docker image:  ghcr.io/now-start/config:2.1.14
 ```
 
----
+이미 stable release가 존재하는 모듈은 prepare 단계에서 건너뛰므로, 한
+모듈의 버전만 올라간 main push에서도 나머지 모듈 이미지를 다시 만들지
+않습니다. 이미지 발행 후 tag나 release 생성만 실패한 경우에는 OCI revision이
+같은 기존 이미지를 재사용해 누락된 release 단계를 이어갑니다.
 
-## 지원 레포지토리
+## 입력과 Secret
 
-| 레포 | 패턴 |
-|---|---|
-| [platform](https://github.com/now-start/platform) | 모노레포 (config, eureka, admin, gateway) |
-| [nyang-nyang-bot](https://github.com/now-start/nyang-nyang-bot) | 단일 레포 |
+| 이름 | 기본값 | 설명 |
+| --- | --- | --- |
+| `registry-org` | `ghcr.io/now-start` | 이미지 registry와 namespace |
+| `module` | 빈 값 | Gradle 모듈 및 이미지 이름 |
+| `registry-password` | 필수 | 이미지 push에 사용할 token |
 
----
+## 실행 과정
 
-## 장점
+```text
+pull_request
+  -> reusable-java-test.yaml
 
-- ✅ **일관성**: 모든 서비스가 동일한 배포 프로세스 사용
-- ✅ **유지보수성**: 중앙에서 워크플로우 관리
-- ✅ **효율성**: 이미 릴리스된 버전/tag는 자동 skip
-- ✅ **확장성**: 단일 레포/모노레포 모두 동일한 재사용 워크플로우로 지원
+main push
+  -> reusable-java-prepare.yaml
+       version, Java version, existing Git tag/release 확인
+  -> reusable-java-test.yaml
+  -> reusable-java-docker.yaml
+       ghcr.io/...:{version} build and push
+  -> reusable-java-release.yaml
+       {version} 또는 {module}-{version} tag/release 생성
+```
+
+기존 애플리케이션 workflow에 남아 있는 `release` 트리거는 호환을 위해
+당장 제거하지 않아도 되지만, 이 orchestrator에서는 아무 작업도 실행하지
+않습니다. 각 애플리케이션을 수정할 기회가 있을 때 정리할 수 있습니다.
+
+## GitOps 승격과 롤백
+
+새 이미지가 발행되면 `gitops` 저장소의 Dependabot이 Compose 이미지
+버전을 올리는 PR을 만듭니다. PR이 병합되면 Portainer polling이 변경을
+배포합니다.
+
+```diff
+- image: ghcr.io/now-start/gateway:6.1.0
++ image: ghcr.io/now-start/gateway:6.1.1
+```
+
+배포 실패 시에는 `gitops`의 버전 변경 커밋을 revert합니다. 실패한 버전을
+Dependabot이 다시 제안하지 않게 하려면 해당 이미지와 버전을
+`gitops/.github/dependabot.yml`의 `ignore`에 추가합니다.
+
+## 버전 고정
+
+외부 저장소에서 reusable workflow를 호출할 때 `@main`은 최신 변경을 즉시
+따릅니다. 동작을 안정화한 뒤에는 release tag 또는 전체 commit SHA로
+고정하는 것을 권장합니다.
+
+## 검증
+
+```sh
+tests/run_tests.sh
+```
+
+이 명령은 reusable workflow를 actionlint로 검사하고 셸 로직을 Bats로
+검증합니다.

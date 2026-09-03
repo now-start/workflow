@@ -10,12 +10,12 @@ FAIL=0
 
 # ── actionlint ───────────────────────────────────────────────────────────────
 echo "━━━━ actionlint: workflow YAML validation ━━━━"
-if actionlint "$WORKFLOWS_DIR"/reusable-*.yaml 2>&1; then
+if actionlint "$WORKFLOWS_DIR"/reusable-*.yaml "$REPO_ROOT"/examples/*.yaml 2>&1; then
   echo "✅ actionlint passed"
-  ((PASS++))
+  PASS=$((PASS + 1))
 else
   echo "❌ actionlint failed"
-  ((FAIL++))
+  FAIL=$((FAIL + 1))
 fi
 
 echo ""
@@ -24,9 +24,9 @@ echo ""
 echo "━━━━ bats: shell logic unit tests ━━━━"
 for TEST_FILE in "$BATS_DIR"/*.bats; do
   if bats "$TEST_FILE"; then
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
   echo ""
 done

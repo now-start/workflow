@@ -2,7 +2,8 @@
 # reusable-java-prepare.yaml 의 Java 버전 자동 감지 로직 테스트
 
 setup() {
-  FIXTURES_DIR="$BATS_TEST_DIRNAME/../fixtures/build-gradle"
+  FIXTURES_DIR="$BATS_TEST_TMPDIR/build-gradle"
+  mkdir -p "$FIXTURES_DIR"
 }
 
 detect_java_version() {

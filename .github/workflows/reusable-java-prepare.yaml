@@ -3,11 +3,6 @@ name: Reusable Java Prepare
 on:
   workflow_call:
     inputs:
-      environment:
-        description: 'Deployment environment (e.g., prd, dev)'
-        required: false
-        type: string
-        default: 'prd'
       module:
         description: 'Gradle submodule name (e.g., config-service). Empty for single-module projects.'
         required: false
@@ -26,6 +21,12 @@ on:
       should-skip:
         description: 'Whether subsequent build/image steps should be skipped'
         value: ${{ jobs.prepare.outputs.should-skip }}
+      source-sha:
+        description: 'Commit associated with the version image and Git tag'
+        value: ${{ jobs.prepare.outputs.source-sha }}
+      tag-exists:
+        description: 'Whether the version Git tag already exists'
+        value: ${{ jobs.prepare.outputs.tag-exists }}
 
 permissions:
   contents: read
@@ -37,10 +38,12 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag-name: ${{ steps.version.outputs.tag-name }}
       java-version: ${{ steps.java-info.outputs.version }}
-      should-skip: ${{ steps.check-skip.outputs.skip }}
+      should-skip: ${{ steps.check-state.outputs.skip }}
+      source-sha: ${{ steps.check-state.outputs.source-sha }}
+      tag-exists: ${{ steps.check-state.outputs.tag-exists }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Validate module name
         if: ${{ inputs.module != '' }}
@@ -84,7 +87,7 @@ jobs:
           echo "✅ Detected Java version: $VERSION ($BUILD_FILE)"
 
       - name: Set up JDK ${{ steps.java-info.outputs.version }}
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           java-version: ${{ steps.java-info.outputs.version }}
           distribution: 'temurin'
@@ -105,16 +108,20 @@ jobs:
             exit 1
           fi
 
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Version '$VERSION' must be a stable SemVer value (for example, 1.2.3)"
+            exit 1
+          fi
+
           TAG_NAME="${MODULE:+$MODULE-}$VERSION"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag-name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "✅ Detected project version: $VERSION (tag: $TAG_NAME)"
 
-      - name: Check if build should be skipped
-        id: check-skip
+      - name: Resolve tag and release state
+        id: check-state
         env:
-          ENVIRONMENT: ${{ inputs.environment }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JAVA_VERSION: ${{ steps.java-info.outputs.version }}
           MODULE: ${{ inputs.module }}
@@ -123,31 +130,59 @@ jobs:
         run: |
           SKIP="false"
           REASON=""
+          TAG_EXISTS="false"
+          SOURCE_SHA="$GITHUB_SHA"
+
+          REMOTE_TAG_SHA=$(git ls-remote --refs origin "refs/tags/$TAG_NAME" | awk 'NR == 1 { print $1 }')
+          if [ -n "$REMOTE_TAG_SHA" ]; then
+            TAG_EXISTS="true"
+            SOURCE_SHA="$REMOTE_TAG_SHA"
+          fi
 
           if [ "$VERSION" = "0.0.0" ]; then
             SKIP="true"
             REASON="Initial version (0.0.0)"
           else
-            HTTP_STATUS=$(curl -s -o /dev/null -I -w "%{http_code}" \
+            RELEASE_JSON="$RUNNER_TEMP/release-state.json"
+            HTTP_STATUS=$(curl -sS -o "$RELEASE_JSON" -w "%{http_code}" \
               -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/$TAG_NAME")
+              -H "Accept: application/vnd.github+json" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/$TAG_NAME")
 
-            if [ "$HTTP_STATUS" = "200" ]; then
-              SKIP="true"
-              REASON="Tag $TAG_NAME already exists"
-            fi
+            case "$HTTP_STATUS" in
+              200)
+                if [ "$TAG_EXISTS" != "true" ]; then
+                  echo "❌ Error: Release $TAG_NAME exists without a matching Git tag"
+                  exit 1
+                fi
+                if ! jq -e '.draft == false and .prerelease == false' "$RELEASE_JSON" >/dev/null; then
+                  echo "❌ Error: Existing release $TAG_NAME is not a published stable release"
+                  exit 1
+                fi
+                SKIP="true"
+                REASON="Stable release $TAG_NAME already exists"
+                ;;
+              404)
+                ;;
+              *)
+                echo "❌ Error: Failed to check release $TAG_NAME (HTTP $HTTP_STATUS)"
+                exit 1
+                ;;
+            esac
           fi
 
-          echo "skip=$SKIP" >> "$GITHUB_OUTPUT"
-          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+          {
+            echo "skip=$SKIP"
+            echo "source-sha=$SOURCE_SHA"
+            echo "tag-exists=$TAG_EXISTS"
+            echo "reason=$REASON"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### 📊 Prepare Summary"
             echo "- **Version**: \`$VERSION\`"
             echo "- **Tag**: \`$TAG_NAME\`"
             echo "- **Java**: \`$JAVA_VERSION\`"
-            echo "- **Environment**: \`$ENVIRONMENT\`"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$MODULE" ]; then
             echo "- **Module**: \`$MODULE\`" >> "$GITHUB_STEP_SUMMARY"
