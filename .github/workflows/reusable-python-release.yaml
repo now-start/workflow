@@ -1,0 +1,53 @@
+name: Reusable Python Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Project SemVer
+        required: true
+        type: string
+      prerelease:
+        description: Whether to publish a GitHub prerelease
+        required: true
+        type: string
+      source-sha:
+        description: Commit that the Git tag must reference
+        required: true
+        type: string
+    secrets:
+      github-token:
+        description: GitHub token for creating releases
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Create version tag and release
+        env:
+          GH_TOKEN: ${{ secrets.github-token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+        run: |
+          TAGS=$(git ls-remote --tags origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}")
+          TAG_SHA=$(awk 'NR == 1 { sha = $1 } /\^\{\}$/ { sha = $1 } END { print sha }' <<< "$TAGS")
+          if [ -n "$TAG_SHA" ]; then
+            [ "$TAG_SHA" = "$SOURCE_SHA" ] || { echo 'Git tag revision changed' >&2; exit 1; }
+          else
+            git tag "$VERSION" "$SOURCE_SHA"
+            git push origin "refs/tags/$VERSION"
+          fi
+          RELEASE_ARGS=(--verify-tag --title "$VERSION" --generate-notes)
+          if [ "$PRERELEASE" = 'true' ]; then
+            RELEASE_ARGS+=(--prerelease --latest=false)
+          fi
+          gh release create "$VERSION" "${RELEASE_ARGS[@]}"

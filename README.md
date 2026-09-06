@@ -1,6 +1,6 @@
 # now-start/workflow
 
-Java/Spring Boot 애플리케이션의 공통 CI workflow입니다. 애플리케이션
+Java/Spring Boot 및 Python/uv 애플리케이션의 공통 CI workflow입니다. 애플리케이션
 저장소는 테스트와 이미지 발행까지만 담당하고, 운영에 배포할 버전은
 [`now-start/gitops`](https://github.com/now-start/gitops)에서 관리합니다.
 
@@ -53,6 +53,46 @@ Gradle version이 `5.9.8`이면 다음 산출물을 생성합니다.
 Git tag:       5.9.8
 Docker image:  ghcr.io/now-start/{repository}:5.9.8
 ```
+
+## Python/uv
+
+`examples/build-python.yaml`처럼 `reusable-python-app.yaml@main`을 호출합니다.
+애플리케이션에는 `pyproject.toml`, `uv.lock`, `.python-version`, `Dockerfile`이
+있어야 하며 dev 의존성에 Ruff, mypy, pytest, pip-audit를 포함합니다.
+
+- PR, `develop` push, 수동 실행: locked uv 설치, 포맷/lint/타입/테스트/취약점 검사
+- `main` push: 같은 검사 후 amd64/arm64 버전 이미지와 GitHub Release 발행
+- `uv-version` 입력 기본값: `0.11.3`
+- `registry-password` Secret: 호출 저장소의 `GITHUB_TOKEN`
+
+Java와 동일하게 `app`은 단계 연결만 담당하고, 실제 작업은 역할별 workflow로
+분리합니다. 애플리케이션 저장소의 호출 방식은 바뀌지 않습니다.
+
+```text
+reusable-python-app.yaml
+  PR / develop push / 수동 실행 -> reusable-python-test.yaml
+  main push
+    -> reusable-python-prepare.yaml  (버전·Git 태그·Release 상태)
+    -> reusable-python-test.yaml     (uv 기반 검증)
+    -> reusable-python-docker.yaml   (불변 이미지 확인·빌드·발행)
+    -> reusable-python-release.yaml  (Git 태그·Release 생성)
+```
+
+버전은 `pyproject.toml`의 `project.version`을 그대로 읽습니다.
+`2.0.0` 또는 `2.0.0-alpha.1`/`2.0.0-beta.1`/`2.0.0-rc.1` 형태를 허용하며,
+Python 내부의 PEP 440 정규화 값(`2.0.0a1`)으로 이미지 태그를 바꾸지 않습니다.
+알파/베타/RC는 GitHub prerelease로 생성하고 latest release로 지정하지 않습니다.
+
+```text
+pyproject.toml: 2.0.0-alpha.1
+Git tag:       2.0.0-alpha.1
+Docker image:  ghcr.io/now-start/{repository}:2.0.0-alpha.1
+```
+
+기존 Git 태그와 이미지 revision을 확인하여 발행된 버전을 덮어쓰지 않습니다.
+이미지가 발행된 후 Release 생성만 실패했다면 같은 revision의 이미지를 재사용합니다.
+이미 Release가 있는 버전은 새 이미지를 발행하지 않으므로 다음 발행에는 버전을 올립니다.
+Java 워크플로의 stable-only 버전 정책은 그대로 유지합니다.
 
 ## Gradle 모노레포
 

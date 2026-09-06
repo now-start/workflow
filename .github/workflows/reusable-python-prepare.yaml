@@ -1,0 +1,100 @@
+name: Reusable Python Prepare
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: Project SemVer used for Git and image tags
+        value: ${{ jobs.prepare.outputs.version }}
+      prerelease:
+        description: Whether the version is an alpha, beta, or RC release
+        value: ${{ jobs.prepare.outputs.prerelease }}
+      image:
+        description: GHCR image name
+        value: ${{ jobs.prepare.outputs.image }}
+      source-sha:
+        description: Commit associated with the version
+        value: ${{ jobs.prepare.outputs.source-sha }}
+      tag-exists:
+        description: Whether the version Git tag already exists
+        value: ${{ jobs.prepare.outputs.tag-exists }}
+      release-exists:
+        description: Whether the matching published release already exists
+        value: ${{ jobs.prepare.outputs.release-exists }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      image: ${{ steps.version.outputs.image }}
+      source-sha: ${{ steps.state.outputs.source-sha }}
+      tag-exists: ${{ steps.state.outputs.tag-exists }}
+      release-exists: ${{ steps.state.outputs.release-exists }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Read release version
+        id: version
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import tomllib
+
+          with open('pyproject.toml', 'rb') as source:
+              version = tomllib.load(source)['project']['version']
+          number = r'(?:0|[1-9][0-9]*)'
+          pattern = rf'{number}\.{number}\.{number}(?:-(alpha|beta|rc)\.{number})?'
+          match = re.fullmatch(pattern, version)
+          if not match:
+              raise SystemExit('Use MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-alpha.N/beta.N/rc.N')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+              output.write(f'prerelease={str(match.group(1) is not None).lower()}\n')
+              output.write(f'image=ghcr.io/{os.environ["GITHUB_REPOSITORY"].lower()}\n')
+          PY
+
+      - name: Check release state
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          TAGS=$(git ls-remote --tags origin "refs/tags/$VERSION" "refs/tags/$VERSION^{}")
+          TAG_SHA=$(awk 'NR == 1 { sha = $1 } /\^\{\}$/ { sha = $1 } END { print sha }' <<< "$TAGS")
+          SOURCE_SHA=${TAG_SHA:-$GITHUB_SHA}
+          RELEASE_FILE="$RUNNER_TEMP/python-release.json"
+          HTTP_STATUS=$(curl --fail-with-body --silent --show-error --output "$RELEASE_FILE" \
+            --write-out '%{http_code}' \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$VERSION") || {
+              [ "$HTTP_STATUS" = '404' ] || exit 1
+            }
+          RELEASE_EXISTS=false
+          case "$HTTP_STATUS" in
+            200)
+              [ -n "$TAG_SHA" ] || { echo 'Release has no matching Git tag' >&2; exit 1; }
+              jq -e --argjson prerelease "$PRERELEASE" \
+                '.draft == false and .prerelease == $prerelease' "$RELEASE_FILE" >/dev/null
+              RELEASE_EXISTS=true
+              ;;
+            404) ;;
+            *) echo "Cannot read release state: HTTP $HTTP_STATUS" >&2; exit 1 ;;
+          esac
+
+          TAG_EXISTS=false
+          [ -z "$TAG_SHA" ] || TAG_EXISTS=true
+          {
+            echo "release-exists=$RELEASE_EXISTS"
+            echo "source-sha=$SOURCE_SHA"
+            echo "tag-exists=$TAG_EXISTS"
+          } >> "$GITHUB_OUTPUT"
