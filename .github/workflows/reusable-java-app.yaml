@@ -19,39 +19,33 @@ on:
         required: true
 
 concurrency:
-  group: ${{ github.repository }}-${{ inputs.module || 'root' }}-${{ github.event_name }}-deploy
+  group: ${{ github.repository }}-${{ inputs.module || 'root' }}-${{ github.event_name }}-${{ github.ref }}-release
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  # PR 에서는 빌드/배포 대신 테스트만 수행
   test-only:
-    if: ${{ github.event_name == 'pull_request' }}
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
     uses: ./.github/workflows/reusable-java-test.yaml
     with:
       module: ${{ inputs.module }}
 
-  # main push → 준비 단계 (버전/Java 버전 추출, skip 여부 계산)
   prepare:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/reusable-java-prepare.yaml
     with:
       module: ${{ inputs.module }}
 
-  # 준비 단계에서 skip=false 인 경우에만 Gradle 빌드/테스트 수행
   build:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
     needs: prepare
     uses: ./.github/workflows/reusable-java-test.yaml
     with:
       java-version: ${{ needs.prepare.outputs.java-version }}
       module: ${{ inputs.module }}
 
-  # 빌드 성공 시 Docker 이미지 빌드/푸시
   docker:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
     needs: [prepare, build]
     permissions:
       contents: read
@@ -67,15 +61,15 @@ jobs:
     secrets:
       registry-password: ${{ secrets.registry-password }}
 
-  # Docker 성공 시 stable GitHub Release 생성
   release:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.should-skip == 'false' }}
+    if: needs.prepare.outputs.release-exists == 'false'
     needs: [prepare, docker]
     permissions:
       contents: write
     uses: ./.github/workflows/reusable-java-release.yaml
     with:
       tag-name: ${{ needs.prepare.outputs.tag-name }}
+      prerelease: ${{ needs.prepare.outputs.prerelease }}
       source-sha: ${{ needs.prepare.outputs.source-sha }}
     secrets:
       github-token: ${{ secrets.GITHUB_TOKEN }}

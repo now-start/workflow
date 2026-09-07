@@ -4,8 +4,8 @@ setup() {
   WORKFLOWS_DIR="$BATS_TEST_DIRNAME/../../.github/workflows"
 }
 
-@test "prepare accepts only stable SemVer versions" {
-  run grep -F '[[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]' \
+@test "Java prepare delegates version validation to common policy" {
+  run grep -F 'uses: ./.github/workflows/reusable-release-prepare.yaml' \
     "$WORKFLOWS_DIR/reusable-java-prepare.yaml"
   [ "$status" -eq 0 ]
 }

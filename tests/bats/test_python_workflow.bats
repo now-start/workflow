@@ -9,6 +9,7 @@ setup() {
   export GITHUB_API_URL="https://api.example.invalid"
   export GH_TOKEN="fake-test-token"
   export VERSION="2.0.0-alpha.1" PRERELEASE=true IMAGE=ghcr.io/now-start/example
+  export TAG_NAME="$VERSION" TAG_PREFIX=''
   export TEST_TAG_SHA="" TEST_IMAGE_STATUS=1 TEST_RELEASE_STATUS=404
   export TEST_IMAGE_OUTPUT="manifest unknown"
   export TEST_RELEASE_JSON='{"draft":false,"prerelease":true}'
@@ -17,7 +18,7 @@ setup() {
 
 step_script() {
   ruby -ryaml -e '
-    steps = Dir[File.join(ARGV[0], "reusable-python-*.yaml")].flat_map do |path|
+    steps = Dir[File.join(ARGV[0], "reusable-*.yaml")].flat_map do |path|
       YAML.load_file(path).fetch("jobs").values.flat_map { |job| job.fetch("steps", []) }
     end
     puts steps.find { |step| step["name"] == ARGV[1] }.fetch("run")
@@ -26,7 +27,11 @@ step_script() {
 
 run_version() {
   printf '[project]\nversion = "%s"\n' "$1" > pyproject.toml
-  run bash -e -o pipefail -c "$(step_script 'Read release version')"
+  local script
+  script="$(step_script 'Read project metadata')" || return 1
+  script+=$'\nVERSION=$(sed -n "s/^version=//p" "$GITHUB_OUTPUT" | tail -1)\n'
+  script+="$(step_script 'Validate release version')" || return 1
+  run bash -e -o pipefail -c "$script"
 }
 
 # Stubs exercise the actual workflow shell without contacting GitHub or GHCR.
@@ -34,14 +39,17 @@ install_stubs() {
   git() {
     if [ "$1" = ls-remote ]; then
       if [ -n "$TEST_TAG_SHA" ]; then
-        printf '%s\trefs/tags/%s\n' "$TEST_TAG_SHA" "$VERSION"
+        printf '%s\trefs/tags/%s\n' "$TEST_TAG_SHA" "$TAG_NAME"
+        if [ -n "${TEST_PEELED_SHA:-}" ]; then
+          printf '%s\trefs/tags/%s^{}\n' "$TEST_PEELED_SHA" "$TAG_NAME"
+        fi
       fi
     else
       printf 'git %s\n' "$*" >> "$RUNNER_TEMP/calls"
     fi
   }
   curl() {
-    printf '%s' "$TEST_RELEASE_JSON" > "$RUNNER_TEMP/python-release.json"
+    printf '%s' "$TEST_RELEASE_JSON" > "$RUNNER_TEMP/release-state.json"
     printf '%s' "$TEST_RELEASE_STATUS"
     [ "$TEST_RELEASE_STATUS" -lt 400 ] || return 22
   }
@@ -71,7 +79,7 @@ run_state() {
       abort if job.key?("steps") || job.key?("runs-on")
       abort unless File.file?(File.join(ARGV[1], job.fetch("uses")))
     end
-    abort unless jobs["test-only"]["if"] == "github.event_name != '\''push'\'' || github.ref != '\''refs/heads/main'\''"
+    abort unless jobs["test-only"]["if"] == "github.event_name == '\''pull_request'\'' || github.event_name == '\''workflow_dispatch'\'' || (github.event_name == '\''push'\'' && github.ref != '\''refs/heads/main'\'')"
     abort unless jobs["prepare"]["if"] == "github.event_name == '\''push'\'' && github.ref == '\''refs/heads/main'\''"
     abort unless jobs["build"]["needs"] == "prepare"
     abort unless jobs["docker"]["needs"] == %w[prepare build]
@@ -216,5 +224,59 @@ run_state() {
   export SOURCE_SHA="$GITHUB_SHA" TEST_TAG_SHA=3333333333333333333333333333333333333333
   run bash -e -o pipefail -c "$(step_script 'Create version tag and release')"
   [ "$status" -ne 0 ]
+  [ ! -e "$RUNNER_TEMP/calls" ]
+}
+
+@test "stable release uses normal release flags and preserves module tag" {
+  install_stubs
+  export SOURCE_SHA="$GITHUB_SHA" TAG_NAME=config-2.0.0 PRERELEASE=false
+  run bash -e -o pipefail -c "$(step_script 'Create version tag and release')"
+  [ "$status" -eq 0 ]
+  grep -q 'gh release create config-2.0.0 --verify-tag' "$RUNNER_TEMP/calls"
+  ! grep -q -- '--prerelease\|--latest=false' "$RUNNER_TEMP/calls"
+}
+
+@test "existing matching release is idempotent without writes" {
+  install_stubs
+  export SOURCE_SHA="$GITHUB_SHA" TEST_TAG_SHA="$GITHUB_SHA" TEST_RELEASE_STATUS=200
+  run bash -e -o pipefail -c "$(step_script 'Create version tag and release')"
+  [ "$status" -eq 0 ]
+  [ ! -e "$RUNNER_TEMP/calls" ]
+}
+
+@test "release errors and incorrect classification fail before writes" {
+  install_stubs
+  export SOURCE_SHA="$GITHUB_SHA" TEST_TAG_SHA="$GITHUB_SHA" TEST_RELEASE_STATUS=403
+  run bash -e -o pipefail -c "$(step_script 'Create version tag and release')"
+  [ "$status" -ne 0 ]
+  export TEST_RELEASE_STATUS=200
+  for json in '{"draft":true,"prerelease":true}' '{"draft":false,"prerelease":false}' 'invalid json'; do
+    export TEST_RELEASE_JSON="$json"
+    run bash -e -o pipefail -c "$(step_script 'Create version tag and release')"
+    [ "$status" -ne 0 ]
+  done
+  [ ! -e "$RUNNER_TEMP/calls" ]
+}
+
+@test "release without matching Git tag fails in prepare and publication" {
+  install_stubs
+  export SOURCE_SHA="$GITHUB_SHA" TEST_RELEASE_STATUS=200
+  for step in 'Check release state' 'Create version tag and release'; do
+    run bash -e -o pipefail -c "$(step_script "$step")"
+    [ "$status" -ne 0 ]
+  done
+  [ ! -e "$RUNNER_TEMP/calls" ]
+}
+
+@test "annotated module tags resolve to commit in prepare and publication" {
+  install_stubs
+  export TAG_NAME=config-2.0.0-alpha.1 SOURCE_SHA="$GITHUB_SHA"
+  export TEST_TAG_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa TEST_PEELED_SHA="$GITHUB_SHA"
+  export TEST_RELEASE_STATUS=200
+  for step in 'Check release state' 'Create version tag and release'; do
+    run bash -e -o pipefail -c "$(step_script "$step")"
+    [ "$status" -eq 0 ]
+  done
+  grep -qx "source-sha=$GITHUB_SHA" "$GITHUB_OUTPUT"
   [ ! -e "$RUNNER_TEMP/calls" ]
 }

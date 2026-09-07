@@ -4,16 +4,20 @@ on:
   workflow_call:
     inputs:
       tag-name:
-        description: 'Git tag name for the release (e.g., 1.2.3)'
+        description: Git tag including optional module prefix
         required: true
         type: string
+      prerelease:
+        description: Whether to publish a GitHub prerelease
+        type: string
+        default: 'false'
       source-sha:
-        description: 'Commit that the Git tag must reference'
+        description: Commit that the Git tag must reference
         required: true
         type: string
     secrets:
       github-token:
-        description: 'GitHub token for creating/viewing releases'
+        description: GitHub token for viewing and creating releases
         required: true
 
 permissions:
@@ -21,57 +25,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout (for git/gh context)
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-
-      - name: Ensure exact tag and stable release
-        env:
-          GITHUB_TOKEN: ${{ secrets.github-token }}
-          SOURCE_SHA: ${{ inputs.source-sha }}
-          TAG: ${{ inputs.tag-name }}
-        run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-
-          REMOTE_TAG_SHA=$(git ls-remote --refs origin "refs/tags/$TAG" | awk 'NR == 1 { print $1 }')
-          if [ -n "$REMOTE_TAG_SHA" ]; then
-            if [ "$REMOTE_TAG_SHA" != "$SOURCE_SHA" ]; then
-              echo "❌ Tag $TAG points to $REMOTE_TAG_SHA instead of $SOURCE_SHA"
-              exit 1
-            fi
-          else
-            git tag "$TAG" "$SOURCE_SHA"
-            git push origin "refs/tags/$TAG"
-          fi
-
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/$TAG")
-
-          case "$HTTP_STATUS" in
-            200)
-              RELEASE_STATE=$(gh release view "$TAG" --json isDraft,isPrerelease \
-                --jq '[.isDraft, .isPrerelease] | @tsv')
-              if [ "$RELEASE_STATE" != $'false\tfalse' ]; then
-                echo "❌ Existing release $TAG is not a published stable release"
-                exit 1
-              fi
-              echo "Release $TAG already exists"
-              ;;
-            404)
-              gh release create "$TAG" \
-                --verify-tag \
-                --title "$TAG" \
-                --generate-notes
-              ;;
-            *)
-              echo "❌ Error: Failed to check release $TAG (HTTP $HTTP_STATUS)"
-              exit 1
-              ;;
-          esac
-
-          echo "### 📦 Release" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Tag**: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+    uses: ./.github/workflows/reusable-release.yaml
+    with:
+      tag-name: ${{ inputs.tag-name }}
+      prerelease: ${{ inputs.prerelease }}
+      source-sha: ${{ inputs.source-sha }}
+    secrets:
+      github-token: ${{ secrets.github-token }}

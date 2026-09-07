@@ -8,7 +8,7 @@ Java/Spring Boot 및 Python/uv 애플리케이션의 공통 CI workflow입니다
 
 ```text
 application repository
-  PR              -> test
+  PR / develop / manual -> test
   main push       -> test -> ghcr.io/...:{version} -> GitHub Release
 
 gitops repository
@@ -25,6 +25,38 @@ Portainer
 - Swarm의 `failure_action: rollback`은 배포 도중의 런타임 안전장치이며,
   Git에 기록된 목표 버전은 별도로 되돌려야 합니다.
 
+## 공통 릴리스 정책
+
+Java와 Python은 동일한 버전 검증·태그 확인·릴리스 발행 workflow를 사용합니다.
+
+| 프로젝트 버전 | GitHub Release | Docker 태그 |
+| --- | --- | --- |
+| `2.0.0-alpha.1` / `beta.1` / `rc.1` | Prerelease, Latest 제외 | 전체 버전 문자열 |
+| `2.0.0` | 정식 Release, Latest는 GitHub 자동 판정 | `2.0.0` |
+
+- `main` push만 검증 후 이미지를 발행합니다. PR, `main` 이외 브랜치 push,
+  수동 실행은 언어별 검사만 수행합니다. 호출 저장소에 해당 이벤트 트리거가 있어야 합니다.
+- `latest` Docker 태그와 GitHub의 Latest Release 표시는 별개입니다.
+  정식 버전도 Docker `latest` 태그는 만들지 않습니다.
+- 선행 0, `SNAPSHOT`, `+build`, PEP 440 축약형은 발행 버전으로 허용하지 않습니다.
+  `0.0.0`은 유효한 정식 버전이며 Java에서도 더 이상 자동 건너뛰지 않습니다.
+- 이미 발행된 버전도 검사는 수행하며, 기존 Git 태그의 커밋과 이미지 revision을
+  확인하여 이미지를 재사용합니다. 다른 revision으로 덮어쓰지 않습니다.
+- 이미지 발행 후 Release 생성만 실패하면 같은 이미지를 재사용하여 재시도합니다.
+  기존 태그의 이미지가 없거나 Release 분류가 맞지 않으면 실패합니다.
+
+```text
+Java prepare   -> Gradle metadata ─┐
+                                  ├-> reusable-release-prepare.yaml
+Python prepare -> TOML metadata ───┘      (버전·Git 태그·Release 상태)
+
+Java/Python test -> 언어별 Docker build/reuse -> reusable-release.yaml
+                                                (Git 태그·Release 생성)
+```
+
+기존 `reusable-java-release.yaml`과 `reusable-python-release.yaml` 호출 인터페이스는
+공통 발행 workflow로 전달하는 얇은 래퍼로 유지합니다.
+
 ## 단일 저장소
 
 ```yaml
@@ -32,9 +64,10 @@ name: App CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -72,10 +105,10 @@ Java와 동일하게 `app`은 단계 연결만 담당하고, 실제 작업은 �
 reusable-python-app.yaml
   PR / develop push / 수동 실행 -> reusable-python-test.yaml
   main push
-    -> reusable-python-prepare.yaml  (버전·Git 태그·Release 상태)
+    -> reusable-python-prepare.yaml  (메타데이터 추출·공통 정책 호출)
     -> reusable-python-test.yaml     (uv 기반 검증)
     -> reusable-python-docker.yaml   (불변 이미지 확인·빌드·발행)
-    -> reusable-python-release.yaml  (Git 태그·Release 생성)
+    -> reusable-python-release.yaml  (공통 발행 호출)
 ```
 
 버전은 `pyproject.toml`의 `project.version`을 그대로 읽습니다.
@@ -92,7 +125,7 @@ Docker image:  ghcr.io/now-start/{repository}:2.0.0-alpha.1
 기존 Git 태그와 이미지 revision을 확인하여 발행된 버전을 덮어쓰지 않습니다.
 이미지가 발행된 후 Release 생성만 실패했다면 같은 revision의 이미지를 재사용합니다.
 이미 Release가 있는 버전은 새 이미지를 발행하지 않으므로 다음 발행에는 버전을 올립니다.
-Java 워크플로의 stable-only 버전 정책은 그대로 유지합니다.
+Java도 같은 stable/alpha/beta/RC 정책을 사용합니다.
 
 ## Gradle 모노레포
 
@@ -122,9 +155,9 @@ Git tag:       config-2.1.14
 Docker image:  ghcr.io/now-start/config:2.1.14
 ```
 
-이미 stable release가 존재하는 모듈은 prepare 단계에서 건너뛰므로, 한
-모듈의 버전만 올라간 main push에서도 나머지 모듈 이미지를 다시 만들지
-않습니다. 이미지 발행 후 tag나 release 생성만 실패한 경우에는 OCI revision이
+이미 Release가 존재하는 모듈도 검사를 수행하지만, 한 모듈의 버전만 올라간
+main push에서 나머지 모듈 이미지는 revision 확인 후 재사용합니다.
+이미지 발행 후 tag나 release 생성만 실패한 경우에는 OCI revision이
 같은 기존 이미지를 재사용해 누락된 release 단계를 이어갑니다.
 
 ## 입력과 Secret
@@ -138,17 +171,17 @@ Docker image:  ghcr.io/now-start/config:2.1.14
 ## 실행 과정
 
 ```text
-pull_request
+pull_request / non-main push / workflow_dispatch
   -> reusable-java-test.yaml
 
 main push
   -> reusable-java-prepare.yaml
-       version, Java version, existing Git tag/release 확인
+       Gradle/Java metadata 추출 -> 공통 버전·Git 태그·Release 확인
   -> reusable-java-test.yaml
   -> reusable-java-docker.yaml
        ghcr.io/...:{version} build and push
   -> reusable-java-release.yaml
-       {version} 또는 {module}-{version} tag/release 생성
+       공통 발행: {version} 또는 {module}-{version} tag/release 생성
 ```
 
 기존 애플리케이션 workflow에 남아 있는 `release` 트리거는 호환을 위해

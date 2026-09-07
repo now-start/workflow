@@ -1,7 +1,7 @@
 # 모노레포 (Monorepo) 예시
 # 하나의 레포에 여러 Gradle 서브모듈이 존재하는 경우
 # 각 모듈의 Gradle version/tag 기준으로 릴리스 여부를 판단
-# 버전이 변경되지 않은 모듈은 reusable workflow 내부에서 skip
+# 기존 버전 이미지는 revision 확인 후 재사용
 # 레포의 .github/workflows/build.yaml 파일로 저장하여 사용
 #
 # 태그 형식: {module}-{version}  예) config-2.1.5, gateway-4.8.0
@@ -13,9 +13,10 @@ name: Platform CI/CD
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+  workflow_dispatch:
 
 permissions:
   contents: write
