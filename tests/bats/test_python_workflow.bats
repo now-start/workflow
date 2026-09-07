@@ -143,6 +143,21 @@ run_state() {
   grep -qx 'release-exists=false' "$GITHUB_OUTPUT"
 }
 
+@test "Buildx exact image not-found response allows first publication" {
+  export TEST_IMAGE_OUTPUT="ERROR: $IMAGE:$VERSION: not found"
+  run_state
+  [ "$status" -eq 0 ]
+  grep -qx 'image-exists=false' "$GITHUB_OUTPUT"
+}
+
+@test "unrelated not-found errors still stop publication" {
+  for message in 'docker: command not found' 'ERROR: credential helper not found' 'ERROR: ghcr.io/other/image:2.0.0: not found'; do
+    export TEST_IMAGE_OUTPUT="$message"
+    run_state
+    [ "$status" -ne 0 ]
+  done
+}
+
 @test "existing version cannot overwrite another revision image" {
   export TEST_IMAGE_STATUS=0
   export TEST_IMAGE_OUTPUT='{"annotations":{"org.opencontainers.image.revision":"other"}}'

@@ -65,7 +65,8 @@ jobs:
             }
             IMAGE_EXISTS=true
           else
-            if ! grep -qiE 'manifest unknown|no such manifest|manifest.*not found' <<< "$MANIFEST"; then
+            if [ "$MANIFEST" != "ERROR: $IMAGE:$VERSION: not found" ] \
+              && ! grep -qiE 'manifest unknown|no such manifest|manifest.*not found' <<< "$MANIFEST"; then
               echo "$MANIFEST" >&2
               exit 1
             fi
