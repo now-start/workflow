@@ -41,3 +41,13 @@ setup() {
     "$WORKFLOWS_DIR/reusable-java-app.yaml"
   [ "$status" -ne 0 ]
 }
+
+@test "Java publication runs only for a new version tag" {
+  run ruby -ryaml -e '
+    jobs = YAML.load_file(ARGV[0]).fetch("jobs")
+    %w[build docker release].each do |name|
+      abort unless jobs.fetch(name).fetch("if") == "needs.prepare.outputs.tag-exists == '\''false'\''"
+    end
+  ' "$WORKFLOWS_DIR/reusable-java-app.yaml"
+  [ "$status" -eq 0 ]
+}

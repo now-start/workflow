@@ -31,12 +31,14 @@ jobs:
     uses: ./.github/workflows/reusable-python-prepare.yaml
 
   build:
+    if: needs.prepare.outputs.tag-exists == 'false'
     needs: prepare
     uses: ./.github/workflows/reusable-python-test.yaml
     with:
       uv-version: ${{ inputs.uv-version }}
 
   docker:
+    if: needs.prepare.outputs.tag-exists == 'false'
     needs: [prepare, build]
     permissions:
       contents: read
@@ -51,7 +53,7 @@ jobs:
       registry-password: ${{ secrets.registry-password }}
 
   release:
-    if: needs.prepare.outputs.release-exists == 'false'
+    if: needs.prepare.outputs.tag-exists == 'false'
     needs: [prepare, docker]
     permissions:
       contents: write

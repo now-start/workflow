@@ -84,7 +84,9 @@ run_state() {
     abort unless jobs["build"]["needs"] == "prepare"
     abort unless jobs["docker"]["needs"] == %w[prepare build]
     abort unless jobs["release"]["needs"] == %w[prepare docker]
-    abort unless jobs["release"]["if"] == "needs.prepare.outputs.release-exists == '\''false'\''"
+    %w[build docker release].each do |name|
+      abort unless jobs[name]["if"] == "needs.prepare.outputs.tag-exists == '\''false'\''"
+    end
   ' "$WORKFLOWS_DIR/reusable-python-app.yaml" "$WORKFLOWS_DIR/../.."
   [ "$status" -eq 0 ]
 }
